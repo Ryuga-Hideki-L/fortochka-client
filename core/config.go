@@ -6,9 +6,17 @@ import (
 	"fmt"
 )
 
+// Split — настройки раздельного туннелирования (что идёт мимо Форточки).
+type Split struct {
+	BypassRu bool     // РФ-домены напрямую
+	Apps     []string // имена процессов мимо туннеля (chrome.exe)
+	Sites    []string // домены мимо туннеля (example.com)
+}
+
 // BuildConfig собирает конфиг sing-box из профилей подписки:
-// TUN (весь трафик), авто-выбор лучшего сервера по задержке, обход локалки.
-func BuildConfig(profiles []Profile) ([]byte, error) {
+// TUN (весь трафик), авто-выбор лучшего сервера по задержке, обход локалки,
+// плюс раздельное туннелирование по приложениям/сайтам/РФ-доменам.
+func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 	var outbounds []map[string]any
 	var tags []string
 	used := map[string]bool{}
@@ -106,18 +114,32 @@ func BuildConfig(profiles []Profile) ([]byte, error) {
 		}},
 		"outbounds": all,
 		"route": map[string]any{
-			"rules": []map[string]any{
-				{"action": "sniff"},
-				{"protocol": "dns", "action": "hijack-dns"},
-				{"ip_is_private": true, "outbound": "direct"},
-				// РФ-домены — напрямую (быстрее, не ломает банки/госуслуги)
-				{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "outbound": "direct"},
-			},
+			"rules":                 buildRoute(sp),
 			"final":                 "proxy",
 			"auto_detect_interface": true,
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// buildRoute — правила маршрутизации с учётом раздельного туннелирования.
+// Порядок важен: первое совпадение выигрывает, потом final=proxy.
+func buildRoute(sp Split) []map[string]any {
+	rules := []map[string]any{
+		{"action": "sniff"},
+		{"protocol": "dns", "action": "hijack-dns"},
+		{"ip_is_private": true, "outbound": "direct"},
+	}
+	if len(sp.Apps) > 0 {
+		rules = append(rules, map[string]any{"process_name": sp.Apps, "outbound": "direct"})
+	}
+	if len(sp.Sites) > 0 {
+		rules = append(rules, map[string]any{"domain_suffix": sp.Sites, "outbound": "direct"})
+	}
+	if sp.BypassRu {
+		rules = append(rules, map[string]any{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "outbound": "direct"})
+	}
+	return rules
 }
 
 func nonEmpty(a, b string) string {

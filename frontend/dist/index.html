@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Fortochka</title>
   <link rel="stylesheet" href="style.css" />
+  <style>
+    .split-block{margin-top:14px;border-top:1px solid rgba(255,255,255,.1);padding-top:14px;text-align:left}
+    .split-toggle{display:flex;align-items:center;gap:10px;font-size:13.5px;cursor:pointer;margin-bottom:12px;line-height:1.4}
+    .split-toggle input{width:17px;height:17px;flex:none;accent-color:#4fd1c5;cursor:pointer}
+    .split-label{display:block;font-size:12px;color:#8a93a3;margin:12px 0 5px}
+    .split-label small{opacity:.7}
+    #bypassApps,#bypassSites{width:100%;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.14);border-radius:8px;
+      color:#e8ecf1;font:inherit;font-size:13px;padding:9px 11px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}
+    #bypassApps:focus,#bypassSites:focus{border-color:#4fd1c5}
+  </style>
 </head>
 <body>
   <div class="app">
@@ -49,6 +59,18 @@
       <div class="sheet-title">Ссылка Fortochka</div>
       <p class="sheet-hint">Вставьте ссылку, которую вам дали. Один раз.</p>
       <textarea id="link" rows="3" spellcheck="false" placeholder="hiddify://import/… или http://…/sub/…"></textarea>
+
+      <div class="split-block">
+        <label class="split-toggle">
+          <input type="checkbox" id="bypassRu" />
+          <span>Российские сайты — напрямую <small style="color:#8a93a3">(быстрее, не ломает банки и госуслуги)</small></span>
+        </label>
+        <label class="split-label">Приложения мимо Форточки <small>(по одному в строке: chrome.exe)</small></label>
+        <textarea id="bypassApps" rows="2" spellcheck="false" placeholder="chrome.exe&#10;steam.exe"></textarea>
+        <label class="split-label">Сайты мимо Форточки <small>(по одному в строке: example.com)</small></label>
+        <textarea id="bypassSites" rows="2" spellcheck="false" placeholder="gosuslugi.ru&#10;sberbank.ru"></textarea>
+      </div>
+
       <div class="sheet-row">
         <button class="ghost" id="cancel">Отмена</button>
         <button class="save" id="save">Сохранить</button>

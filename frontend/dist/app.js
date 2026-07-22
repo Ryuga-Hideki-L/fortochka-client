@@ -52,8 +52,18 @@ async function togglePower() {
   }
 }
 
+function lines(s) {
+  return (s || "").split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+}
+
 async function openSheet() {
   el("link").value = await api().GetLink();
+  try {
+    const sp = await api().GetSplit();
+    el("bypassRu").checked = !!(sp && sp.bypassRu);
+    el("bypassApps").value = ((sp && sp.bypassApps) || []).join("\n");
+    el("bypassSites").value = ((sp && sp.bypassSites) || []).join("\n");
+  } catch (e) {}
   el("sheet").classList.remove("hidden");
 }
 function closeSheet() {
@@ -66,6 +76,9 @@ async function saveLink() {
     return;
   }
   await api().SetLink(v);
+  try {
+    await api().SetSplit(el("bypassRu").checked, lines(el("bypassApps").value), lines(el("bypassSites").value));
+  } catch (e) {}
   closeSheet();
   toast("Сохранено");
 }

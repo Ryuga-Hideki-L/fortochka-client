@@ -18,21 +18,34 @@ import (
 )
 
 type App struct {
-	ctx        context.Context
-	engine     *core.Engine
-	mu         sync.Mutex
-	link       string
-	state      string
-	cfg        []byte        // последний рабочий конфиг — для авто-реконнекта
-	healthStop chan struct{} // закрытие останавливает health-loop
+	ctx         context.Context
+	engine      *core.Engine
+	mu          sync.Mutex
+	link        string
+	state       string
+	cfg         []byte        // последний рабочий конфиг — для авто-реконнекта
+	healthStop  chan struct{} // закрытие останавливает health-loop
+	bypassRu    bool          // РФ-домены напрямую
+	bypassApps  []string      // приложения мимо туннеля
+	bypassSites []string      // сайты мимо туннеля
 }
 
 type settings struct {
-	Link string `json:"link"`
+	Link        string   `json:"link"`
+	BypassRu    *bool    `json:"bypassRu,omitempty"` // указатель: nil = первый запуск → дефолт true
+	BypassApps  []string `json:"bypassApps,omitempty"`
+	BypassSites []string `json:"bypassSites,omitempty"`
+}
+
+// SplitCfg отдаётся во фронт для окна настроек.
+type SplitCfg struct {
+	BypassRu    bool     `json:"bypassRu"`
+	BypassApps  []string `json:"bypassApps"`
+	BypassSites []string `json:"bypassSites"`
 }
 
 func NewApp() *App {
-	return &App{engine: core.NewEngine(), state: "disconnected"}
+	return &App{engine: core.NewEngine(), state: "disconnected", bypassRu: true}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -62,12 +75,45 @@ func (a *App) loadSettings() {
 	var s settings
 	if json.Unmarshal(b, &s) == nil {
 		a.link = s.Link
+		if s.BypassRu != nil {
+			a.bypassRu = *s.BypassRu
+		}
+		a.bypassApps = s.BypassApps
+		a.bypassSites = s.BypassSites
 	}
 }
 
 func (a *App) saveSettings() {
-	b, _ := json.MarshalIndent(settings{Link: a.link}, "", "  ")
+	ru := a.bypassRu
+	b, _ := json.MarshalIndent(settings{Link: a.link, BypassRu: &ru,
+		BypassApps: a.bypassApps, BypassSites: a.bypassSites}, "", "  ")
 	os.WriteFile(filepath.Join(configDir(), "settings.json"), b, 0o600)
+}
+
+// GetSplit / SetSplit — настройки раздельного туннелирования для окна настроек.
+func (a *App) GetSplit() SplitCfg {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return SplitCfg{BypassRu: a.bypassRu, BypassApps: a.bypassApps, BypassSites: a.bypassSites}
+}
+
+func (a *App) SetSplit(bypassRu bool, apps []string, sites []string) {
+	a.mu.Lock()
+	a.bypassRu = bypassRu
+	a.bypassApps = cleanList(apps)
+	a.bypassSites = cleanList(sites)
+	a.mu.Unlock()
+	a.saveSettings()
+}
+
+func cleanList(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (a *App) GetLink() string {
@@ -131,6 +177,7 @@ func (a *App) GetLogs() string {
 func (a *App) Connect() string {
 	a.mu.Lock()
 	link := a.link
+	sp := core.Split{BypassRu: a.bypassRu, Apps: a.bypassApps, Sites: a.bypassSites}
 	a.mu.Unlock()
 	if link == "" {
 		return "Вставьте ссылку подписки"
@@ -150,7 +197,7 @@ func (a *App) Connect() string {
 		a.setState("disconnected")
 		return "В подписке нет поддерживаемых профилей"
 	}
-	cfg, err := core.BuildConfig(profiles)
+	cfg, err := core.BuildConfig(profiles, sp)
 	if err != nil {
 		a.log("конфиг: %s", err)
 		a.setState("disconnected")
