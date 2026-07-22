@@ -17,7 +17,7 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
       - name: Build
-        run: wails build -platform windows/amd64 -o Fortochka.exe
+        run: wails build -platform windows/amd64 -o Fortochka.exe -ldflags "-s -w" -trimpath
       - name: Bundle sing-box
         shell: pwsh
         run: |
@@ -57,7 +57,7 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
       - name: Build
-        run: wails build -platform linux/amd64 -tags webkit2_41 -o Fortochka
+        run: wails build -platform linux/amd64 -tags webkit2_41 -o Fortochka -ldflags "-s -w" -trimpath
       - name: Bundle sing-box
         run: |
           TAG=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -m1 tag_name | cut -d '"' -f4)
