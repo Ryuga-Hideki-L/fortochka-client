@@ -31,7 +31,7 @@ jobs:
           path: build/bin/*
 
   linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -39,11 +39,11 @@ jobs:
       - name: Deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
       - name: Build
-        run: wails build -platform linux/amd64 -o Fortochka
+        run: wails build -platform linux/amd64 -tags webkit2_41 -o Fortochka
       - name: Bundle sing-box
         run: |
           TAG=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -m1 tag_name | cut -d '"' -f4)
