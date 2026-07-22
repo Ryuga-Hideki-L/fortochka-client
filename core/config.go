@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 )
 
 // Split — настройки раздельного туннелирования (что идёт мимо Форточки).
@@ -22,7 +21,6 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 	var tags []string
 	var wsTag string // CDN-профиль (ws) — он надёжен в РФ, делаем его дефолтным
 	used := map[string]bool{}
-	domSet := map[string]bool{} // домены серверов (не IP) — их надо резолвить НАПРЯМУЮ
 
 	for i, p := range profiles {
 		if p.Net == "xhttp" { // движок sing-box не поддерживает xhttp
@@ -33,9 +31,6 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 			tag = fmt.Sprintf("%s-%d", p.Net, i)
 		}
 		used[tag] = true
-		if p.Server != "" && net.ParseIP(p.Server) == nil {
-			domSet[p.Server] = true // домен (не IP) — резолвить напрямую для бутстрапа
-		}
 
 		ob := map[string]any{
 			"type":        "vless",
@@ -108,20 +103,14 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 	}
 	all := append(append(head, outbounds...), tail...)
 
-	// DNS: домены серверов резолвим НАПРЯМУЮ (local), иначе не поднять прокси
-	// (замкнутый круг: чтобы резолвить через прокси — нужен прокси). Остальное — через туннель.
-	var serverDomains []string
-	for d := range domSet {
-		serverDomains = append(serverDomains, d)
-	}
+	// DNS: адреса аутбаундов (vpn.rungvard.net) резолвим НАПРЯМУЮ через local —
+	// это задаёт route.default_domain_resolver (иначе замкнутый круг + FATAL
+	// в sing-box 1.12+). Остальные запросы — через туннель (remote).
 	dnsServers := []map[string]any{
 		{"type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"},
 		{"type": "local", "tag": "local"},
 	}
 	var dnsRules []map[string]any
-	if len(serverDomains) > 0 {
-		dnsRules = append(dnsRules, map[string]any{"domain": serverDomains, "server": "local"})
-	}
 	if sp.BypassRu {
 		dnsRules = append(dnsRules, map[string]any{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "server": "local"})
 	}
@@ -145,9 +134,10 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 		}},
 		"outbounds": all,
 		"route": map[string]any{
-			"rules":                 buildRoute(sp),
-			"final":                 "proxy",
-			"auto_detect_interface": true,
+			"default_domain_resolver": map[string]any{"server": "local"},
+			"rules":                   buildRoute(sp),
+			"final":                   "proxy",
+			"auto_detect_interface":   true,
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
