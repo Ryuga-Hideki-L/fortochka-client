@@ -8,6 +8,8 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      HAS_CERT: ${{ secrets.WINDOWS_CERT_PFX != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -26,7 +28,7 @@ jobs:
           $sb = (Get-ChildItem sbdir -Recurse -Filter sing-box.exe | Select-Object -First 1).FullName
           Copy-Item $sb build/bin/
       - name: Sign binaries (only if a cert is configured)
-        if: ${{ secrets.WINDOWS_CERT_PFX != '' }}
+        if: env.HAS_CERT == 'true'
         shell: pwsh
         env:
           PFX_B64: ${{ secrets.WINDOWS_CERT_PFX }}
