@@ -82,7 +82,6 @@ func BuildConfig(profiles []Profile) ([]byte, error) {
 	}
 	tail := []map[string]any{
 		{"type": "direct", "tag": "direct"},
-		{"type": "dns", "tag": "dns-out"},
 	}
 	all := append(append(head, outbounds...), tail...)
 
@@ -90,10 +89,8 @@ func BuildConfig(profiles []Profile) ([]byte, error) {
 		"log": map[string]any{"level": "warn"},
 		"dns": map[string]any{
 			"servers": []map[string]any{
-				{"tag": "remote", "address": "https://1.1.1.1/dns-query", "detour": "proxy"},
-				{"tag": "local", "address": "local", "detour": "direct"},
+				{"type": "https", "tag": "remote", "server": "8.8.8.8", "detour": "proxy"},
 			},
-			"rules":    []map[string]any{{"outbound": "any", "server": "local"}},
 			"final":    "remote",
 			"strategy": "prefer_ipv4",
 		},
@@ -101,16 +98,16 @@ func BuildConfig(profiles []Profile) ([]byte, error) {
 			"type":           "tun",
 			"tag":            "tun-in",
 			"interface_name": "fortochka",
-			"inet4_address":  "172.19.0.1/30",
+			"address":        []string{"172.19.0.1/30"},
 			"auto_route":     true,
 			"strict_route":   true,
 			"stack":          "system",
-			"sniff":          true,
 		}},
 		"outbounds": all,
 		"route": map[string]any{
 			"rules": []map[string]any{
-				{"protocol": "dns", "outbound": "dns-out"},
+				{"action": "sniff"},
+				{"protocol": "dns", "action": "hijack-dns"},
 				{"ip_is_private": true, "outbound": "direct"},
 			},
 			"final":                 "proxy",
