@@ -14,6 +14,7 @@ type Engine struct {
 	mu  sync.Mutex
 	cmd *exec.Cmd
 	dir string
+	log *os.File
 }
 
 func NewEngine() *Engine { return &Engine{} }
@@ -38,7 +39,7 @@ func binaryPath() (string, error) {
 	return "", errors.New("движок sing-box не найден рядом с приложением")
 }
 
-func (e *Engine) Start(config []byte) error {
+func (e *Engine) Start(config []byte, logPath string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.cmd != nil {
@@ -57,15 +58,25 @@ func (e *Engine) Start(config []byte) error {
 		os.RemoveAll(dir)
 		return err
 	}
+	logf, _ := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+
 	cmd := exec.Command(bin, "run", "-c", cfgPath)
 	cmd.Dir = dir
+	if logf != nil {
+		cmd.Stdout = logf
+		cmd.Stderr = logf
+	}
 	hideWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		os.RemoveAll(dir)
+		if logf != nil {
+			logf.Close()
+		}
 		return errors.New("не удалось запустить движок (нужны права администратора)")
 	}
 	e.cmd = cmd
 	e.dir = dir
+	e.log = logf
 	return nil
 }
 
@@ -78,6 +89,10 @@ func (e *Engine) Stop() {
 	}
 	if e.dir != "" {
 		os.RemoveAll(e.dir)
+	}
+	if e.log != nil {
+		e.log.Close()
+		e.log = nil
 	}
 	e.cmd = nil
 	e.dir = ""

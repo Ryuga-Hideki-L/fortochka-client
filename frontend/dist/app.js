@@ -70,11 +70,34 @@ async function saveLink() {
   toast("Сохранено");
 }
 
+async function refreshLogs() {
+  const box = el("logbox");
+  box.textContent = await api().GetLogs();
+  box.scrollTop = box.scrollHeight;
+}
+async function openLogs() {
+  await refreshLogs();
+  el("logsheet").classList.remove("hidden");
+}
+function closeLogs() {
+  el("logsheet").classList.add("hidden");
+}
+async function copyLogs() {
+  try {
+    await navigator.clipboard.writeText(el("logbox").textContent);
+    toast("Скопировано");
+  } catch (e) {}
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   el("power").onclick = togglePower;
   el("gear").onclick = openSheet;
   el("cancel").onclick = closeSheet;
   el("save").onclick = saveLink;
+  el("logs").onclick = openLogs;
+  el("logclose").onclick = closeLogs;
+  el("logrefresh").onclick = refreshLogs;
+  el("logcopy").onclick = copyLogs;
 
   window.runtime.EventsOn("state", setUI);
 

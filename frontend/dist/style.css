@@ -104,3 +104,11 @@ textarea {
   max-width: 300px; text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.tools { display: flex; gap: 2px; }
+.logbox {
+  margin: 0; max-height: 320px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px; font: 11px/1.5 ui-monospace, monospace; color: var(--mut);
+  white-space: pre-wrap; word-break: break-word;
+}

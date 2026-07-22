@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -101,6 +102,30 @@ func (a *App) setState(s string) {
 	runtime.EventsEmit(a.ctx, "state", s)
 }
 
+func logPath() string { return filepath.Join(configDir(), "fortochka.log") }
+
+func (a *App) log(format string, args ...any) {
+	f, err := os.OpenFile(logPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
+}
+
+// GetLogs отдаёт хвост журнала (свой + движка) для окна логов.
+func (a *App) GetLogs() string {
+	b, err := os.ReadFile(logPath())
+	if err != nil {
+		return "Журнал пуст."
+	}
+	const max = 16000
+	if len(b) > max {
+		b = b[len(b)-max:]
+	}
+	return string(b)
+}
+
 func (a *App) Connect() string {
 	a.mu.Lock()
 	link := a.link
@@ -108,32 +133,40 @@ func (a *App) Connect() string {
 	if link == "" {
 		return "Вставьте ссылку подписки"
 	}
+	// новый журнал на сессию
+	os.WriteFile(logPath(), []byte(fmt.Sprintf("%s  === подключение ===\n", time.Now().Format("15:04:05"))), 0o600)
 	a.setState("connecting")
 
 	profiles, err := core.FetchProfiles(link)
 	if err != nil {
+		a.log("подписка: %s", err)
 		a.setState("disconnected")
 		return err.Error()
 	}
+	a.log("получено профилей: %d", len(profiles))
 	if len(profiles) == 0 {
 		a.setState("disconnected")
 		return "В подписке нет поддерживаемых профилей"
 	}
 	cfg, err := core.BuildConfig(profiles)
 	if err != nil {
+		a.log("конфиг: %s", err)
 		a.setState("disconnected")
 		return err.Error()
 	}
-	if err := a.engine.Start(cfg); err != nil {
+	if err := a.engine.Start(cfg, logPath()); err != nil {
+		a.log("движок: %s", err)
 		a.setState("disconnected")
 		return err.Error()
 	}
+	a.log("движок запущен")
 	a.setState("connected")
 	return ""
 }
 
 func (a *App) Disconnect() {
 	a.engine.Stop()
+	a.log("отключено")
 	a.setState("disconnected")
 }
 
