@@ -29,9 +29,21 @@ type Profile struct {
 	Service string
 }
 
-func FetchProfiles(subURL string) ([]Profile, error) {
+func FetchProfiles(input string) ([]Profile, error) {
+	input = strings.TrimSpace(input)
+
+	// Прямые vless-ссылки (одна или несколько) — парсим сразу, БЕЗ скачивания.
+	// Спасает, когда сервер подписки недоступен (Gcore-edge зарезан у юзера).
+	if strings.Contains(input, "vless://") {
+		if out := parseLines(input); len(out) > 0 {
+			return out, nil
+		}
+		return nil, errors.New("Не удалось разобрать vless-ссылку — проверьте, что скопировали целиком")
+	}
+
+	// Иначе это ссылка-подписка — качаем.
 	client := &http.Client{Timeout: 12 * time.Second}
-	resp, err := client.Get(subURL)
+	resp, err := client.Get(input)
 	if err != nil {
 		return nil, errors.New("Не удалось скачать подписку — проверьте ссылку и интернет")
 	}
@@ -40,18 +52,22 @@ func FetchProfiles(subURL string) ([]Profile, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseLines(decodeMaybeBase64(string(raw))), nil
+}
 
+// parseLines вытаскивает все vless-профили из текста (переносы или пробелы между ссылками).
+func parseLines(s string) []Profile {
 	var out []Profile
-	for _, line := range strings.Split(decodeMaybeBase64(string(raw)), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "vless://") {
-			continue
-		}
-		if p, ok := parseVless(line); ok {
-			out = append(out, p)
+	for _, line := range strings.Split(s, "\n") {
+		for _, part := range strings.Fields(line) {
+			if strings.HasPrefix(part, "vless://") {
+				if p, ok := parseVless(part); ok {
+					out = append(out, p)
+				}
+			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 func decodeMaybeBase64(s string) string {
