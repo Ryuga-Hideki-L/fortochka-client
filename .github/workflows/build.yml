@@ -5,6 +5,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -17,7 +20,10 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
       - name: Build
-        run: wails build -platform windows/amd64 -o Fortochka.exe -ldflags "-s -w" -trimpath
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          wails build -platform windows/amd64 -o Fortochka.exe -ldflags "-s -w -X main.version=$v" -trimpath
       - name: Bundle sing-box
         shell: pwsh
         run: |
@@ -39,10 +45,19 @@ jobs:
           $st = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
           & $st sign /f $pfx /p $env:PFX_PWD /fd SHA256 /tr http://timestamp.sectigo.com /td SHA256 build/bin/Fortochka.exe build/bin/sing-box.exe
           Remove-Item $pfx -Force
-      - uses: actions/upload-artifact@v4
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          Compress-Archive -Path build/bin/* -DestinationPath "Fortochka.zip" -Force
+          Copy-Item "Fortochka.zip" "Fortochka-$v.zip"
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          name: Fortochka-windows
-          path: build/bin/*
+          files: |
+            Fortochka.zip
+            Fortochka-*.zip
 
   linux:
     runs-on: ubuntu-24.04
@@ -57,14 +72,24 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
       - name: Build
-        run: wails build -platform linux/amd64 -tags webkit2_41 -o Fortochka -ldflags "-s -w" -trimpath
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          wails build -platform linux/amd64 -tags webkit2_41 -o Fortochka -ldflags "-s -w -X main.version=$v" -trimpath
       - name: Bundle sing-box
         run: |
           TAG=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -m1 tag_name | cut -d '"' -f4)
           VER=${TAG#v}
           curl -sL -o sb.tgz "https://github.com/SagerNet/sing-box/releases/download/${TAG}/sing-box-${VER}-linux-amd64.tar.gz"
           tar -xzf sb.tgz --strip-components=1 -C build/bin "sing-box-${VER}-linux-amd64/sing-box"
-      - uses: actions/upload-artifact@v4
+      - name: Package
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          tar -czf "Fortochka-linux.tar.gz" -C build/bin .
+          cp "Fortochka-linux.tar.gz" "Fortochka-$v-linux.tar.gz"
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          name: Fortochka-linux
-          path: build/bin/*
+          files: |
+            Fortochka-linux.tar.gz
+            Fortochka-*-linux.tar.gz

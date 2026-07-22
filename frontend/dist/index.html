@@ -14,6 +14,10 @@
     #bypassApps,#bypassSites{width:100%;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.14);border-radius:8px;
       color:#e8ecf1;font:inherit;font-size:13px;padding:9px 11px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}
     #bypassApps:focus,#bypassSites:focus{border-color:#4fd1c5}
+    .updbar{display:flex;align-items:center;gap:10px;justify-content:center;padding:8px 14px;background:rgba(79,209,197,.12);border-bottom:1px solid rgba(79,209,197,.25);font-size:13px;color:#cdeeea}
+    .updbar button{background:#4fd1c5;border:none;color:#06201d;font:inherit;font-weight:700;font-size:12.5px;padding:5px 12px;border-radius:7px;cursor:pointer}
+    .updbar button:hover{filter:brightness(1.06)}
+    .updbar button:disabled{opacity:.6;cursor:default}
   </style>
 </head>
 <body>
@@ -37,6 +41,11 @@
         </button>
       </div>
     </header>
+
+    <div class="updbar hidden" id="updbar">
+      <span id="updtext">Доступна новая версия</span>
+      <button id="updbtn">Обновить</button>
+    </div>
 
     <main class="stage">
       <div class="shield" id="shield">

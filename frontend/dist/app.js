@@ -102,6 +102,31 @@ async function copyLogs() {
   } catch (e) {}
 }
 
+async function checkUpdate() {
+  try {
+    const u = await api().CheckUpdate();
+    if (u && u.hasUpdate) {
+      el("updtext").textContent = "Доступна версия " + u.latest;
+      el("updbar").classList.remove("hidden");
+    }
+  } catch (e) {}
+}
+async function doUpdate() {
+  el("updtext").textContent = "Обновляю…";
+  el("updbtn").disabled = true;
+  try {
+    const err = await api().DoUpdate();
+    if (err) {
+      toast(err);
+      el("updbtn").disabled = false;
+      el("updtext").textContent = "Доступно обновление";
+    }
+    // при успехе приложение само перезапустится
+  } catch (e) {
+    el("updbtn").disabled = false;
+  }
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   el("power").onclick = togglePower;
   el("gear").onclick = openSheet;
@@ -112,9 +137,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   el("logrefresh").onclick = refreshLogs;
   el("logcopy").onclick = copyLogs;
 
+  el("updbtn").onclick = doUpdate;
+
   window.runtime.EventsOn("state", setUI);
 
   const link = await api().GetLink();
   setUI(await api().State());
   if (!link) openSheet();
+  checkUpdate();
 });
