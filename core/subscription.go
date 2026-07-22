@@ -59,11 +59,13 @@ func decodeMaybeBase64(s string) string {
 	if strings.Contains(s, "vless://") {
 		return s
 	}
+	// некоторые сервера отдают base64 с переносами строк/пробелами — убираем перед декодом
+	compact := strings.Join(strings.Fields(s), "")
 	for _, enc := range []*base64.Encoding{
 		base64.StdEncoding, base64.RawStdEncoding,
 		base64.URLEncoding, base64.RawURLEncoding,
 	} {
-		if b, err := enc.DecodeString(s); err == nil && strings.Contains(string(b), "vless://") {
+		if b, err := enc.DecodeString(compact); err == nil && strings.Contains(string(b), "vless://") {
 			return string(b)
 		}
 	}

@@ -243,17 +243,21 @@ func (a *App) Disconnect() {
 	a.setState("disconnected")
 }
 
-// probe проверяет, что трафик реально уходит через туннель (endpoint отвечает 204).
+// probe проверяет, что трафик реально уходит через туннель. Два хоста —
+// чтобы блокировка/сбой одного не давал ложное «не подключено».
 func (a *App) probe(within time.Duration) bool {
 	client := &http.Client{Timeout: 4 * time.Second}
+	urls := []string{"https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204"}
 	deadline := time.Now().Add(within)
 	for {
-		resp, err := client.Get("https://www.gstatic.com/generate_204")
-		if err == nil {
-			code := resp.StatusCode
-			resp.Body.Close()
-			if code == 204 || code == 200 {
-				return true
+		for _, u := range urls {
+			resp, err := client.Get(u)
+			if err == nil {
+				code := resp.StatusCode
+				resp.Body.Close()
+				if code == 204 || code == 200 {
+					return true
+				}
 			}
 		}
 		if time.Now().After(deadline) {
@@ -311,6 +315,14 @@ func (a *App) reconnect(stop chan struct{}) {
 		a.log("реконнект: движок не стартовал: %s", err)
 		a.setState("disconnected")
 		return
+	}
+	// пользователь мог нажать «Отключить», пока мы переподключались —
+	// иначе останется живой sing-box после отключения (зомби-туннель).
+	select {
+	case <-stop:
+		a.engine.Stop()
+		return
+	default:
 	}
 	if a.probe(12 * time.Second) {
 		a.log("переподключено")
