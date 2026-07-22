@@ -19,6 +19,7 @@ type Split struct {
 func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 	var outbounds []map[string]any
 	var tags []string
+	var resilientTags []string // grpc/ws/http — мультиплекс, вне «Сигнала 3» ТСПУ
 	used := map[string]bool{}
 
 	for i, p := range profiles {
@@ -65,6 +66,12 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 			ob["transport"] = map[string]any{"type": "grpc", "service_name": def(p.Service, "grpc")}
 		}
 
+		// Мультиплексные транспорты (один h2/ws-канал) не палятся «Сигналом 3» ТСПУ
+		// (>3 параллельных TLS к одному SNI → фриз ~120с). Сырой tcp/Vision — палится.
+		if p.Net == "grpc" || p.Net == "ws" || p.Net == "http" || p.Net == "httpupgrade" {
+			resilientTags = append(resilientTags, tag)
+		}
+
 		outbounds = append(outbounds, ob)
 		tags = append(tags, tag)
 	}
@@ -73,20 +80,29 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 		return nil, errors.New("нет профилей, совместимых с движком")
 	}
 
+	// В auto-пул берём устойчивые транспорты (grpc/ws), если они есть. Сырой tcp/Vision
+	// исключаем из авто-выбора: крошечный пробник generate_204 на нём ПРОХОДИТ, а реальный
+	// трафик замерзает после ~15-20 КБ (ТСПУ blackholing) — urltest иначе залипал на мёртвом.
+	// tcp/Vision остаётся в selector'е «proxy» как ручной/последний резерв.
+	autoPool := resilientTags
+	if len(autoPool) == 0 {
+		autoPool = tags // устойчивых нет — берём что есть, лучше так, чем никак
+	}
+
 	// По умолчанию — «auto» (urltest): сам выбирает РАБОЧИЙ профиль под сеть юзера.
 	// У разных людей рабочий разный: у кого-то CDN (прямой OVH душат), у кого-то
-	// прямой Reality (Gcore-edge недоступен). urltest адаптируется, а не залипает.
+	// grpc-Reality (Gcore-edge недоступен). urltest адаптируется, а не залипает.
 	head := []map[string]any{
 		{
 			"type":      "selector",
 			"tag":       "proxy",
-			"outbounds": append([]string{"auto"}, tags...),
+			"outbounds": append([]string{"auto"}, tags...), // все транспорты доступны вручную
 			"default":   "auto",
 		},
 		{
 			"type":      "urltest",
 			"tag":       "auto",
-			"outbounds": tags,
+			"outbounds": autoPool,
 			"url":       "https://www.gstatic.com/generate_204",
 			"interval":  "3m0s",
 		},
