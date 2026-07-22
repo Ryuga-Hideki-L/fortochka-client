@@ -25,6 +25,18 @@ jobs:
           Expand-Archive sb.zip -DestinationPath sbdir -Force
           $sb = (Get-ChildItem sbdir -Recurse -Filter sing-box.exe | Select-Object -First 1).FullName
           Copy-Item $sb build/bin/
+      - name: Sign binaries (only if a cert is configured)
+        if: ${{ secrets.WINDOWS_CERT_PFX != '' }}
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_CERT_PFX }}
+          PFX_PWD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = "$env:RUNNER_TEMP\cs.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          $st = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          & $st sign /f $pfx /p $env:PFX_PWD /fd SHA256 /tr http://timestamp.sectigo.com /td SHA256 build/bin/Fortochka.exe build/bin/sing-box.exe
+          Remove-Item $pfx -Force
       - uses: actions/upload-artifact@v4
         with:
           name: Fortochka-windows
