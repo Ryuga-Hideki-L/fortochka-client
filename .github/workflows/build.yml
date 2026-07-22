@@ -17,12 +17,14 @@ jobs:
       - name: Build
         run: wails build -platform windows/amd64 -o Fortochka.exe
       - name: Bundle sing-box
-        shell: bash
+        shell: pwsh
         run: |
-          TAG=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -m1 tag_name | cut -d '"' -f4)
-          VER=${TAG#v}
-          curl -sL -o sb.zip "https://github.com/SagerNet/sing-box/releases/download/${TAG}/sing-box-${VER}-windows-amd64.zip"
-          unzip -j sb.zip "*/sing-box.exe" -d build/bin/
+          $tag = (Invoke-RestMethod https://api.github.com/repos/SagerNet/sing-box/releases/latest).tag_name
+          $ver = $tag.TrimStart('v')
+          Invoke-WebRequest "https://github.com/SagerNet/sing-box/releases/download/$tag/sing-box-$ver-windows-amd64.zip" -OutFile sb.zip
+          Expand-Archive sb.zip -DestinationPath sbdir -Force
+          $sb = (Get-ChildItem sbdir -Recurse -Filter sing-box.exe | Select-Object -First 1).FullName
+          Copy-Item $sb build/bin/
       - uses: actions/upload-artifact@v4
         with:
           name: Fortochka-windows
