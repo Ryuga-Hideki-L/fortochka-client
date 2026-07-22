@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 )
 
 // Split — настройки раздельного туннелирования (что идёт мимо Форточки).
@@ -21,6 +22,7 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 	var tags []string
 	var wsTag string // CDN-профиль (ws) — он надёжен в РФ, делаем его дефолтным
 	used := map[string]bool{}
+	domSet := map[string]bool{} // домены серверов (не IP) — их надо резолвить НАПРЯМУЮ
 
 	for i, p := range profiles {
 		if p.Net == "xhttp" { // движок sing-box не поддерживает xhttp
@@ -31,6 +33,9 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 			tag = fmt.Sprintf("%s-%d", p.Net, i)
 		}
 		used[tag] = true
+		if p.Server != "" && net.ParseIP(p.Server) == nil {
+			domSet[p.Server] = true // домен (не IP) — резолвить напрямую для бутстрапа
+		}
 
 		ob := map[string]any{
 			"type":        "vless",
@@ -103,15 +108,31 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 	}
 	all := append(append(head, outbounds...), tail...)
 
+	// DNS: домены серверов резолвим НАПРЯМУЮ (local), иначе не поднять прокси
+	// (замкнутый круг: чтобы резолвить через прокси — нужен прокси). Остальное — через туннель.
+	var serverDomains []string
+	for d := range domSet {
+		serverDomains = append(serverDomains, d)
+	}
+	dnsServers := []map[string]any{
+		{"type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"},
+		{"type": "local", "tag": "local"},
+	}
+	var dnsRules []map[string]any
+	if len(serverDomains) > 0 {
+		dnsRules = append(dnsRules, map[string]any{"domain": serverDomains, "server": "local"})
+	}
+	if sp.BypassRu {
+		dnsRules = append(dnsRules, map[string]any{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "server": "local"})
+	}
+	dnsCfg := map[string]any{"servers": dnsServers, "final": "remote", "strategy": "prefer_ipv4"}
+	if len(dnsRules) > 0 {
+		dnsCfg["rules"] = dnsRules
+	}
+
 	cfg := map[string]any{
 		"log": map[string]any{"level": "warn"},
-		"dns": map[string]any{
-			"servers": []map[string]any{
-				{"type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"},
-			},
-			"final":    "remote",
-			"strategy": "prefer_ipv4",
-		},
+		"dns": dnsCfg,
 		"inbounds": []map[string]any{{
 			"type":           "tun",
 			"tag":            "tun-in",
