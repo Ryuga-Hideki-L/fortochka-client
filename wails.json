@@ -1,0 +1,17 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Fortochka",
+  "outputfilename": "Fortochka",
+  "frontend:dir": "frontend",
+  "frontend:build": "",
+  "frontend:install": "",
+  "frontend:dev:serverUrl": "",
+  "author": {
+    "name": "rungvard"
+  },
+  "info": {
+    "companyName": "Fortochka",
+    "productName": "Fortochka",
+    "productVersion": "1.0.0"
+  }
+}

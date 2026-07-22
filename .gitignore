@@ -1,0 +1,8 @@
+/build/bin/
+/frontend/node_modules/
+*.exe
+*.syso
+.DS_Store
+node_modules/
+sing-box
+sing-box.exe

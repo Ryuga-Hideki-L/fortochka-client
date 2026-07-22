@@ -1,0 +1,54 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - name: Build
+        run: wails build -platform windows/amd64 -o Fortochka.exe
+      - name: Bundle sing-box
+        shell: bash
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -m1 tag_name | cut -d '"' -f4)
+          VER=${TAG#v}
+          curl -sL -o sb.zip "https://github.com/SagerNet/sing-box/releases/download/${TAG}/sing-box-${VER}-windows-amd64.zip"
+          unzip -j sb.zip "*/sing-box.exe" -d build/bin/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fortochka-windows
+          path: build/bin/*
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+      - name: Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - name: Build
+        run: wails build -platform linux/amd64 -o Fortochka
+      - name: Bundle sing-box
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -m1 tag_name | cut -d '"' -f4)
+          VER=${TAG#v}
+          curl -sL -o sb.tgz "https://github.com/SagerNet/sing-box/releases/download/${TAG}/sing-box-${VER}-linux-amd64.tar.gz"
+          tar -xzf sb.tgz --strip-components=1 -C build/bin "sing-box-${VER}-linux-amd64/sing-box"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fortochka-linux
+          path: build/bin/*

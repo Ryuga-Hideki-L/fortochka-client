@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fortochka</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="bar">
+      <div class="logo">
+        <span class="tick"></span>
+        Fortochka
+      </div>
+      <button class="gear" id="gear" title="Настройки" aria-label="Настройки">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>
+        </svg>
+      </button>
+    </header>
+
+    <main class="stage">
+      <div class="shield" id="shield">
+        <svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z"/>
+          <path class="check" d="m9 12 2 2 4-4"/>
+        </svg>
+      </div>
+      <div class="status" id="status">Отключено</div>
+      <div class="sub" id="sub">Нажмите, чтобы подключиться</div>
+
+      <button class="power" id="power">Подключиться</button>
+    </main>
+
+    <footer class="foot" id="foot"></footer>
+  </div>
+
+  <div class="sheet hidden" id="sheet">
+    <div class="sheet-card">
+      <div class="sheet-title">Ссылка Fortochka</div>
+      <p class="sheet-hint">Вставьте ссылку, которую вам дали. Один раз.</p>
+      <textarea id="link" rows="3" spellcheck="false" placeholder="hiddify://import/… или http://…/sub/…"></textarea>
+      <div class="sheet-row">
+        <button class="ghost" id="cancel">Отмена</button>
+        <button class="save" id="save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
