@@ -89,7 +89,7 @@ func BuildConfig(profiles []Profile) ([]byte, error) {
 		"log": map[string]any{"level": "warn"},
 		"dns": map[string]any{
 			"servers": []map[string]any{
-				{"type": "https", "tag": "remote", "server": "8.8.8.8", "detour": "proxy"},
+				{"type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"},
 			},
 			"final":    "remote",
 			"strategy": "prefer_ipv4",
@@ -99,8 +99,9 @@ func BuildConfig(profiles []Profile) ([]byte, error) {
 			"tag":            "tun-in",
 			"interface_name": "fortochka",
 			"address":        []string{"172.19.0.1/30"},
+			"mtu":            1400, // под Reality/TLS-заголовки — без фрагментации
 			"auto_route":     true,
-			"strict_route":   true,
+			"strict_route":   true, // kill-switch: трафик не может обойти туннель
 			"stack":          "system",
 		}},
 		"outbounds": all,
@@ -109,6 +110,8 @@ func BuildConfig(profiles []Profile) ([]byte, error) {
 				{"action": "sniff"},
 				{"protocol": "dns", "action": "hijack-dns"},
 				{"ip_is_private": true, "outbound": "direct"},
+				// РФ-домены — напрямую (быстрее, не ломает банки/госуслуги)
+				{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "outbound": "direct"},
 			},
 			"final":                 "proxy",
 			"auto_detect_interface": true,

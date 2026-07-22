@@ -18,11 +18,13 @@ import (
 )
 
 type App struct {
-	ctx    context.Context
-	engine *core.Engine
-	mu     sync.Mutex
-	link   string
-	state  string
+	ctx        context.Context
+	engine     *core.Engine
+	mu         sync.Mutex
+	link       string
+	state      string
+	cfg        []byte        // последний рабочий конфиг — для авто-реконнекта
+	healthStop chan struct{} // закрытие останавливает health-loop
 }
 
 type settings struct {
@@ -159,15 +161,115 @@ func (a *App) Connect() string {
 		a.setState("disconnected")
 		return err.Error()
 	}
-	a.log("движок запущен")
+	a.log("движок запущен, проверяю выход в сеть…")
+
+	// Не показываем «Подключено», пока реально не вышли через туннель.
+	// Если туннель мёртв — strict_route блокирует трафик, проверка не пройдёт.
+	if !a.probe(12 * time.Second) {
+		a.log("туннель не поднялся — нет ответа через VPN")
+		a.engine.Stop()
+		a.setState("disconnected")
+		return "Не удалось выйти в сеть через VPN. Проверьте ссылку или смените сервер."
+	}
+	a.log("туннель проверен, соединение активно")
+
+	a.mu.Lock()
+	a.cfg = cfg
+	stop := make(chan struct{})
+	a.healthStop = stop
+	a.mu.Unlock()
+	go a.healthLoop(stop)
+
 	a.setState("connected")
 	return ""
 }
 
 func (a *App) Disconnect() {
+	a.mu.Lock()
+	if a.healthStop != nil {
+		close(a.healthStop)
+		a.healthStop = nil
+	}
+	a.mu.Unlock()
 	a.engine.Stop()
 	a.log("отключено")
 	a.setState("disconnected")
+}
+
+// probe проверяет, что трафик реально уходит через туннель (endpoint отвечает 204).
+func (a *App) probe(within time.Duration) bool {
+	client := &http.Client{Timeout: 4 * time.Second}
+	deadline := time.Now().Add(within)
+	for {
+		resp, err := client.Get("https://www.gstatic.com/generate_204")
+		if err == nil {
+			code := resp.StatusCode
+			resp.Body.Close()
+			if code == 204 || code == 200 {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(700 * time.Millisecond)
+	}
+}
+
+// healthLoop раз в 30с проверяет живость туннеля и переподключает при обрыве.
+func (a *App) healthLoop(stop chan struct{}) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	fails := 0
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			if a.State() != "connected" {
+				return
+			}
+			if a.probe(5 * time.Second) {
+				fails = 0
+				continue
+			}
+			fails++
+			a.log("проверка связи не прошла (%d/2)", fails)
+			if fails >= 2 {
+				a.reconnect(stop)
+				fails = 0
+			}
+		}
+	}
+}
+
+// reconnect перезапускает движок тем же конфигом. При неудаче трафик остаётся
+// заблокированным kill-switch'ем (strict_route) — утечки нет.
+func (a *App) reconnect(stop chan struct{}) {
+	select {
+	case <-stop: // уже отключились вручную
+		return
+	default:
+	}
+	a.mu.Lock()
+	cfg := a.cfg
+	a.mu.Unlock()
+	if cfg == nil {
+		return
+	}
+	a.log("обрыв — переподключаюсь…")
+	a.engine.Stop()
+	time.Sleep(1 * time.Second)
+	if err := a.engine.Start(cfg, logPath()); err != nil {
+		a.log("реконнект: движок не стартовал: %s", err)
+		a.setState("disconnected")
+		return
+	}
+	if a.probe(12 * time.Second) {
+		a.log("переподключено")
+	} else {
+		a.log("реконнект не удался — трафик заблокирован (нет утечки)")
+	}
 }
 
 // ExitIP запрашивается уже через туннель — показываем адрес выхода.
