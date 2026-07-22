@@ -19,6 +19,7 @@ type Split struct {
 func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 	var outbounds []map[string]any
 	var tags []string
+	var wsTag string // CDN-профиль (ws) — он надёжен в РФ, делаем его дефолтным
 	used := map[string]bool{}
 
 	for i, p := range profiles {
@@ -61,6 +62,9 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 			t := map[string]any{"type": "ws", "path": p.Path}
 			t["headers"] = map[string]any{"Host": nonEmpty(p.Host, p.Server)}
 			ob["transport"] = t
+			if wsTag == "" {
+				wsTag = tag // первый CDN-профиль → дефолт
+			}
 		case "grpc":
 			ob["transport"] = map[string]any{"type": "grpc", "service_name": def(p.Service, "grpc")}
 		}
@@ -73,12 +77,18 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 		return nil, errors.New("нет профилей, совместимых с движком")
 	}
 
+	// По умолчанию — CDN-профиль (надёжен в РФ, подключение сразу, без ожидания
+	// мёртвых прямых Reality-портов). «auto» (urltest по всем) остаётся как выбор.
+	defaultOut := "auto"
+	if wsTag != "" {
+		defaultOut = wsTag
+	}
 	head := []map[string]any{
 		{
 			"type":      "selector",
 			"tag":       "proxy",
 			"outbounds": append([]string{"auto"}, tags...),
-			"default":   "auto",
+			"default":   defaultOut,
 		},
 		{
 			"type":      "urltest",
