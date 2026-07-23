@@ -42,10 +42,12 @@ func (a *App) CheckUpdate() UpdateInfo {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
+		a.setUpd("не удалось проверить обновления (нет связи с GitHub)")
 		return ui
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		a.setUpd(fmt.Sprintf("не удалось проверить обновления (GitHub ответил %d)", resp.StatusCode))
 		return ui
 	}
 	var rel struct {
@@ -70,7 +72,20 @@ func (a *App) CheckUpdate() UpdateInfo {
 		}
 	}
 	ui.HasUpdate = ui.URL != "" && semverNewer(ui.Latest, version)
+	if ui.HasUpdate {
+		a.setUpd(fmt.Sprintf("доступно обновление: %s → %s", version, ui.Latest))
+	} else {
+		a.setUpd(fmt.Sprintf("версия актуальная (%s), обновлений нет", version))
+	}
 	return ui
+}
+
+// setUpd сохраняет статус обновления и сразу пишет его в журнал.
+func (a *App) setUpd(note string) {
+	a.mu.Lock()
+	a.updNote = note
+	a.mu.Unlock()
+	a.log("%s", note)
 }
 
 // DoUpdate скачивает и ставит новую версию. На Windows — самозамена с перезапуском.

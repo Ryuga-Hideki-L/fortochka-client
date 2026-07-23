@@ -28,6 +28,8 @@ type App struct {
 	bypassRu    bool          // РФ-домены напрямую
 	bypassApps  []string      // приложения мимо туннеля
 	bypassSites []string      // сайты мимо туннеля
+	lastChan    string        // последний активный канал (для лога переключений)
+	updNote     string        // статус обновления с последней проверки (для лога)
 }
 
 type settings struct {
@@ -184,8 +186,18 @@ func (a *App) Connect() string {
 	}
 	// новый журнал на сессию
 	os.WriteFile(logPath(), []byte(fmt.Sprintf("%s  === подключение ===\n", time.Now().Format("15:04:05"))), 0o600)
+	a.mu.Lock()
+	a.lastChan = ""
+	un := a.updNote
+	a.mu.Unlock()
+	a.log("Форточка %s · %s", version, osArch())
+	if un != "" {
+		a.log("%s", un)
+	}
+	a.log("источник: %s", sourceDesc(link))
 	a.setState("connecting")
 
+	a.log("скачиваю/разбираю ссылку…")
 	profiles, err := core.FetchProfiles(link)
 	if err != nil {
 		a.log("подписка: %s", err)
@@ -197,6 +209,8 @@ func (a *App) Connect() string {
 		a.setState("disconnected")
 		return "В подписке нет поддерживаемых профилей"
 	}
+	a.logProfiles(profiles)
+	a.log("настройки: %s", splitDesc(sp))
 	cfg, err := core.BuildConfig(profiles, sp)
 	if err != nil {
 		a.log("конфиг: %s", err)
@@ -219,6 +233,7 @@ func (a *App) Connect() string {
 		return "Не удалось выйти в сеть через VPN. Проверьте ссылку или смените сервер."
 	}
 	a.log("туннель проверен, соединение активно")
+	a.logChannels()
 
 	a.mu.Lock()
 	a.cfg = cfg
@@ -282,6 +297,7 @@ func (a *App) healthLoop(stop chan struct{}) {
 			}
 			if a.probe(5 * time.Second) {
 				fails = 0
+				a.noteChannelSwitch() // залогировать, если urltest сменил канал
 				continue
 			}
 			fails++
@@ -326,6 +342,7 @@ func (a *App) reconnect(stop chan struct{}) {
 	}
 	if a.probe(12 * time.Second) {
 		a.log("переподключено")
+		a.logChannels()
 	} else {
 		a.log("реконнект не удался — трафик заблокирован (нет утечки)")
 	}

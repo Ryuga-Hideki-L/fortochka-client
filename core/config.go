@@ -13,6 +13,20 @@ type Split struct {
 	Sites    []string // домены мимо туннеля (example.com)
 }
 
+// ClashAPIAddr — локальный контроллер sing-box для диагностики
+// (какой канал активен, задержки). Только loopback.
+const ClashAPIAddr = "127.0.0.1:19090"
+
+// Resilient — устойчив ли транспорт к «Сигналу 3» ТСПУ (заморозка по параллельным TLS).
+// UDP-протоколы (hysteria2/tuic) и мультиплекс-транспорты (grpc/ws/http) — да; сырой tcp/Vision — нет.
+func Resilient(p Profile) bool {
+	switch p.Proto {
+	case "hysteria2", "tuic":
+		return true
+	}
+	return p.Net == "grpc" || p.Net == "ws" || p.Net == "http" || p.Net == "httpupgrade"
+}
+
 // BuildConfig собирает конфиг sing-box из профилей подписки:
 // TUN (весь трафик), авто-выбор лучшего сервера по задержке, обход локалки,
 // плюс раздельное туннелирование по приложениям/сайтам/РФ-доменам.
@@ -46,18 +60,12 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 		switch proto {
 		case "hysteria2":
 			ob = buildHy2(tag, p)
-			resilient = true // UDP/QUIC — вне TCP-заморозки ТСПУ
 		case "tuic":
 			ob = buildTuic(tag, p)
-			resilient = true // UDP/QUIC — вне TCP-заморозки ТСПУ
 		default: // vless
 			ob = buildVless(tag, p)
-			// Мультиплексные транспорты (один h2/ws-канал) не палятся «Сигналом 3» ТСПУ
-			// (>3 параллельных TLS к одному SNI → фриз ~120с). Сырой tcp/Vision — палится.
-			if p.Net == "grpc" || p.Net == "ws" || p.Net == "http" || p.Net == "httpupgrade" {
-				resilient = true
-			}
 		}
+		resilient = Resilient(p)
 
 		if resilient {
 			resilientTags = append(resilientTags, tag)
@@ -137,6 +145,10 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 			"rules":                   buildRoute(sp),
 			"final":                   "proxy",
 			"auto_detect_interface":   true,
+		},
+		// локальный контроллер — приложение спрашивает у него активный канал и задержки
+		"experimental": map[string]any{
+			"clash_api": map[string]any{"external_controller": ClashAPIAddr},
 		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
