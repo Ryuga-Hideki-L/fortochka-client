@@ -32,6 +32,15 @@ func clearSysProxy() {
 	refreshProxy()
 }
 
+// killStuckProcs — добить зависшие вспомогательные процессы по имени.
+func killStuckProcs() {
+	for _, n := range []string{"sing-box.exe", "winws.exe", "byedpi.exe"} {
+		cmd := exec.Command("taskkill", "/F", "/IM", n)
+		hideWindow(cmd)
+		cmd.Run()
+	}
+}
+
 // refreshProxy — уведомить систему/браузеры о смене настроек прокси.
 func refreshProxy() {
 	proc := syscall.NewLazyDLL("wininet.dll").NewProc("InternetSetOptionW")

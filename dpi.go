@@ -170,6 +170,17 @@ func (a *App) dpiStopLocked() {
 
 func dpiLogPath() string { return filepath.Join(os.TempDir(), "fortochka-zapret.log") }
 
+// Cleanup — кнопка «Завершить зависшие процессы»: корректно останавливает наш
+// движок и «Запрет», снимает системный прокси и добивает зависшие
+// sing-box/winws/byedpi по имени (на случай зомби после сбоя/нехватки ресурсов).
+func (a *App) Cleanup() string {
+	a.Disconnect()
+	a.DPIStop()
+	killStuckProcs()
+	a.log("сброс: зависшие процессы завершены")
+	return "Готово — зависшие процессы завершены"
+}
+
 // DPILog — последние строки лога движка (для UI/диагностики).
 func (a *App) DPILog() string {
 	b, err := os.ReadFile(dpiLogPath())

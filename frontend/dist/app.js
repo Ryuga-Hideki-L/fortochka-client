@@ -199,6 +199,15 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   el("updbtn").onclick = doUpdate;
 
+  el("killstuck").onclick = async () => {
+    try {
+      const msg = await api().Cleanup();
+      toast(msg || "Готово");
+    } catch (e) {
+      toast("Не удалось");
+    }
+  };
+
   el("zapret").onclick = openZapret;
   el("zClose").onclick = closeZapret;
   el("zEngine").onchange = fillPresets;
