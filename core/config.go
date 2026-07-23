@@ -210,6 +210,11 @@ func buildVless(tag string, p Profile) map[string]any {
 			"public_key": p.PBK,
 			"short_id":   p.SID,
 		}
+	} else {
+		// не-Reality (ws+tls за CDN): режем ClientHello, чтобы DPI не читал SNI
+		// одним пакетом. На Reality НЕ ставим — там хендшейк зеркалит реальный сайт.
+		tls["fragment"] = true
+		tls["fragment_fallback_delay"] = "500ms"
 	}
 	ob["tls"] = tls
 	switch p.Net {
