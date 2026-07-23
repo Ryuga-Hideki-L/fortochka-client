@@ -30,6 +30,7 @@ type App struct {
 	bypassSites []string      // сайты мимо туннеля
 	lastChan    string        // последний активный канал (для лога переключений)
 	updNote     string        // статус обновления с последней проверки (для лога)
+	clashAddr   string        // адрес локального контроллера sing-box этой сессии
 }
 
 type settings struct {
@@ -211,7 +212,13 @@ func (a *App) Connect() string {
 	}
 	a.logProfiles(profiles)
 	a.log("настройки: %s", splitDesc(sp))
-	cfg, err := core.BuildConfig(profiles, sp)
+	// свободный порт под локальный контроллер (диагностика). Занят/нет порта —
+	// работаем без него: коннект важнее логов каналов.
+	clashAddr := freeLoopbackAddr()
+	a.mu.Lock()
+	a.clashAddr = clashAddr
+	a.mu.Unlock()
+	cfg, err := core.BuildConfig(profiles, sp, clashAddr)
 	if err != nil {
 		a.log("конфиг: %s", err)
 		a.setState("disconnected")

@@ -13,8 +13,8 @@ type Split struct {
 	Sites    []string // домены мимо туннеля (example.com)
 }
 
-// ClashAPIAddr — локальный контроллер sing-box для диагностики
-// (какой канал активен, задержки). Только loopback.
+// ClashAPIAddr — дефолтный адрес контроллера для тестов. В приложении порт
+// подбирается динамически (свободный), чтобы не падать на занятом порту.
 const ClashAPIAddr = "127.0.0.1:19090"
 
 // Resilient — устойчив ли транспорт к «Сигналу 3» ТСПУ (заморозка по параллельным TLS).
@@ -30,7 +30,7 @@ func Resilient(p Profile) bool {
 // BuildConfig собирает конфиг sing-box из профилей подписки:
 // TUN (весь трафик), авто-выбор лучшего сервера по задержке, обход локалки,
 // плюс раздельное туннелирование по приложениям/сайтам/РФ-доменам.
-func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
+func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error) {
 	var outbounds []map[string]any
 	var tags []string
 	var resilientTags []string // grpc/ws/http — мультиплекс, вне «Сигнала 3» ТСПУ
@@ -146,10 +146,13 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 			"final":                   "proxy",
 			"auto_detect_interface":   true,
 		},
-		// локальный контроллер — приложение спрашивает у него активный канал и задержки
-		"experimental": map[string]any{
-			"clash_api": map[string]any{"external_controller": ClashAPIAddr},
-		},
+	}
+	// локальный контроллер — приложение спрашивает у него активный канал и задержки.
+	// Порт передаёт приложение (свободный); пусто — clash_api не включаем.
+	if clashAddr != "" {
+		cfg["experimental"] = map[string]any{
+			"clash_api": map[string]any{"external_controller": clashAddr},
+		}
 	}
 	return json.MarshalIndent(cfg, "", "  ")
 }

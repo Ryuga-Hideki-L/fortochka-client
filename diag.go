@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -11,6 +12,93 @@ import (
 
 	"fortochka/core"
 )
+
+// Диагностика через локальный контроллер sing-box (clash_api): какой канал
+// активен, какие отвечают, какие душатся. Всё по loopback, наружу не торчит.
+
+// freeLoopbackAddr — свободный порт на 127.0.0.1 для контроллера. "" если не вышло.
+func freeLoopbackAddr() string {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return ""
+	}
+	addr := l.Addr().String()
+	l.Close() // sing-box займёт этот порт через доли секунды
+	return addr
+}
+
+func (a *App) clashJSON(path string) (map[string]any, bool) {
+	a.mu.Lock()
+	addr := a.clashAddr
+	a.mu.Unlock()
+	if addr == "" {
+		return nil, false
+	}
+	c := &http.Client{Timeout: 8 * time.Second}
+	resp, err := c.Get("http://" + addr + path)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	var m map[string]any
+	if json.NewDecoder(resp.Body).Decode(&m) != nil {
+		return nil, false
+	}
+	return m, resp.StatusCode == 200
+}
+
+// autoChannels — каналы в группе авто-выбора (в порядке urltest).
+func (a *App) autoChannels() []string {
+	m, ok := a.clashJSON("/proxies/auto")
+	if !ok {
+		return nil
+	}
+	var out []string
+	if all, ok := m["all"].([]any); ok {
+		for _, t := range all {
+			if s, ok := t.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// testChannel форсирует проверку канала: (задержка_мс, ответил ли).
+func (a *App) testChannel(tag string) (int, bool) {
+	a.mu.Lock()
+	addr := a.clashAddr
+	a.mu.Unlock()
+	if addr == "" {
+		return 0, false
+	}
+	c := &http.Client{Timeout: 9 * time.Second}
+	u := "http://" + addr + "/proxies/" + url.PathEscape(tag) + "/delay?url=" +
+		url.QueryEscape("https://www.gstatic.com/generate_204") + "&timeout=5000"
+	resp, err := c.Get(u)
+	if err != nil {
+		return 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return 0, false
+	}
+	var m map[string]any
+	json.NewDecoder(resp.Body).Decode(&m)
+	if d, ok := m["delay"].(float64); ok {
+		return int(d), true
+	}
+	return 0, false
+}
+
+// activeChannel — какой канал сейчас реально выбран.
+func (a *App) activeChannel() string {
+	m, _ := a.clashJSON("/proxies/auto")
+	if s, ok := m["now"].(string); ok {
+		return s
+	}
+	return ""
+}
 
 func osArch() string { return runtime.GOOS + "/" + runtime.GOARCH }
 
@@ -27,10 +115,12 @@ func sourceDesc(link string) string {
 		return "подписка (" + host + ")"
 	}
 	var kinds []string
+	seen := map[string]bool{}
 	for _, k := range []struct{ p, n string }{
 		{"vless://", "vless"}, {"hysteria2://", "hysteria2"}, {"hy2://", "hysteria2"}, {"tuic://", "tuic"},
 	} {
-		if strings.Contains(link, k.p) && !strings.Contains(strings.Join(kinds, " "), k.n) {
+		if strings.Contains(link, k.p) && !seen[k.n] {
+			seen[k.n] = true
 			kinds = append(kinds, k.n)
 		}
 	}
@@ -56,72 +146,6 @@ func splitDesc(sp core.Split) string {
 		return "весь трафик через туннель"
 	}
 	return strings.Join(parts, ", ")
-}
-
-// Диагностика через локальный контроллер sing-box (clash_api): какой канал
-// активен, какие отвечают, какие душатся. Всё по loopback, наружу не торчит.
-
-const clashBase = "http://" + core.ClashAPIAddr
-
-func clashJSON(path string) (map[string]any, bool) {
-	c := &http.Client{Timeout: 8 * time.Second}
-	resp, err := c.Get(clashBase + path)
-	if err != nil {
-		return nil, false
-	}
-	defer resp.Body.Close()
-	var m map[string]any
-	if json.NewDecoder(resp.Body).Decode(&m) != nil {
-		return nil, false
-	}
-	return m, resp.StatusCode == 200
-}
-
-// autoChannels — каналы в группе авто-выбора (в порядке urltest).
-func autoChannels() []string {
-	m, ok := clashJSON("/proxies/auto")
-	if !ok {
-		return nil
-	}
-	var out []string
-	if all, ok := m["all"].([]any); ok {
-		for _, t := range all {
-			if s, ok := t.(string); ok {
-				out = append(out, s)
-			}
-		}
-	}
-	return out
-}
-
-// testChannel форсирует проверку канала: (задержка_мс, ответил ли).
-func testChannel(tag string) (int, bool) {
-	c := &http.Client{Timeout: 9 * time.Second}
-	u := clashBase + "/proxies/" + url.PathEscape(tag) + "/delay?url=" +
-		url.QueryEscape("https://www.gstatic.com/generate_204") + "&timeout=5000"
-	resp, err := c.Get(u)
-	if err != nil {
-		return 0, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return 0, false
-	}
-	var m map[string]any
-	json.NewDecoder(resp.Body).Decode(&m)
-	if d, ok := m["delay"].(float64); ok {
-		return int(d), true
-	}
-	return 0, false
-}
-
-// activeChannel — какой канал сейчас реально выбран.
-func activeChannel() string {
-	m, _ := clashJSON("/proxies/auto")
-	if s, ok := m["now"].(string); ok {
-		return s
-	}
-	return ""
 }
 
 // logProfiles — сводка загруженных профилей без секретов (сервер:порт/протокол).
@@ -153,19 +177,19 @@ func (a *App) logProfiles(profiles []core.Profile) {
 
 // logChannels прогоняет все каналы авто-выбора и пишет попытки + активный.
 func (a *App) logChannels() {
-	chans := autoChannels()
+	chans := a.autoChannels()
 	if len(chans) == 0 {
 		return
 	}
 	a.log("подбираю рабочий канал (проверок: %d)…", len(chans))
 	for _, tag := range chans {
-		if ms, ok := testChannel(tag); ok {
+		if ms, ok := a.testChannel(tag); ok {
 			a.log("  ✓ %s — отвечает, %d мс", tag, ms)
 		} else {
 			a.log("  ✗ %s — молчит (душится или недоступен)", tag)
 		}
 	}
-	if now := activeChannel(); now != "" {
+	if now := a.activeChannel(); now != "" {
 		a.log("→ активный канал: %s", now)
 		a.mu.Lock()
 		a.lastChan = now
@@ -175,7 +199,7 @@ func (a *App) logChannels() {
 
 // noteChannelSwitch логирует смену активного канала (failover).
 func (a *App) noteChannelSwitch() {
-	now := activeChannel()
+	now := a.activeChannel()
 	if now == "" {
 		return
 	}
