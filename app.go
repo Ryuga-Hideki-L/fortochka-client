@@ -324,6 +324,7 @@ func (a *App) Disconnect() {
 	a.mu.Unlock()
 	a.engine.Stop()
 	a.log("отключено")
+	a.pushLog() // полный лог сессии на сервер
 	a.setState("disconnected")
 }
 
@@ -371,6 +372,9 @@ func (a *App) healthLoop(stop chan struct{}, myGen uint64) {
 			}
 			fails++
 			a.log("проверка связи не прошла (%d/2)", fails)
+			if fails == 1 {
+				a.pushLog() // поймать момент падения (с ошибками sing-box в логе)
+			}
 			if fails >= 2 {
 				a.reconnect(stop, myGen)
 				fails = 0
@@ -421,6 +425,7 @@ func (a *App) reconnect(stop chan struct{}, myGen uint64) {
 		a.logChannels()
 	} else {
 		a.log("реконнект не удался — трафик заблокирован (нет утечки)")
+		a.pushLog()
 		a.setState("disconnected")
 	}
 }

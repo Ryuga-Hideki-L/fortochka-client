@@ -23,6 +23,15 @@ func subIDFromLink(link string) string {
 	return strings.TrimSpace(s)
 }
 
+// pushLog — отправить текущий журнал на сервер (subId берём из сохранённой ссылки).
+// Зовём в ключевых точках: попытка, падение связи, реконнект, отключение.
+func (a *App) pushLog() {
+	a.mu.Lock()
+	link := a.link
+	a.mu.Unlock()
+	a.sendLogToServer(link)
+}
+
 // sendLogToServer шлёт журнал попытки подключения на сервер под subId юзера,
 // чтобы админ видел его в панели без ручной пересылки. Тихо, не блокирует.
 func (a *App) sendLogToServer(link string) {
