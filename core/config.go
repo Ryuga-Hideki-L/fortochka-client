@@ -135,7 +135,9 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 	if sp.BypassRu {
 		dnsRules = append(dnsRules, map[string]any{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "server": "local"})
 	}
-	dnsCfg := map[string]any{"servers": dnsServers, "final": "remote", "strategy": "prefer_ipv4"}
+	// ipv4_only: не отдаём AAAA → нет IPv6-назначений → нет утечки IPv6 мимо туннеля
+	// и нет happy-eyeballs-виса в мёртвый IPv6 (сервера IPv4-only). Сайты почти все с IPv4.
+	dnsCfg := map[string]any{"servers": dnsServers, "final": "remote", "strategy": "ipv4_only"}
 	if len(dnsRules) > 0 {
 		dnsCfg["rules"] = dnsRules
 	}
@@ -147,13 +149,11 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 			"type":           "tun",
 			"tag":            "tun-in",
 			"interface_name": "fortochka",
-			// оба семейства в одном массиве (sing-box 1.12+): без IPv6-адреса strict_route
-			// не перехватывает IPv6 → трафик утекает мимо туннеля.
-			"address":      []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
-			"mtu":          1400, // под Reality/TLS-заголовки — без фрагментации
-			"auto_route":   true,
-			"strict_route": true, // kill-switch: трафик не может обойти туннель
-			"stack":        "system",
+			"address":        []string{"172.19.0.1/30"}, // только IPv4: сервера IPv4-only, IPv6 на TUN ломал связность (happy-eyeballs в мёртвый IPv6)
+			"mtu":            1400,                      // под Reality/TLS-заголовки — без фрагментации
+			"auto_route":     true,
+			"strict_route":   true, // kill-switch: трафик не может обойти туннель
+			"stack":          "system",
 		}},
 		"outbounds": all,
 		"route": map[string]any{
