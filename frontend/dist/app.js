@@ -207,6 +207,10 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   window.runtime.EventsOn("state", setUI);
 
+  try {
+    el("appver").textContent = "v" + (await api().Version());
+  } catch (e) {}
+
   const link = await api().GetLink();
   setUI(await api().State());
   if (!link) openSheet();
