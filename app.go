@@ -185,6 +185,13 @@ func (a *App) Connect() string {
 	if link == "" {
 		return "Вставьте ссылку подписки"
 	}
+	// Zapret (WinDivert) конфликтует с TUN-туннелем — глушим его перед VPN. ByeDPI не мешает.
+	dpi.mu.Lock()
+	zapretOn := dpi.running && dpi.engine == "zapret"
+	dpi.mu.Unlock()
+	if zapretOn {
+		a.DPIStop()
+	}
 	// новый журнал на сессию
 	os.WriteFile(logPath(), []byte(fmt.Sprintf("%s  === подключение ===\n", time.Now().Format("15:04:05"))), 0o600)
 	a.mu.Lock()
