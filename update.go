@@ -136,6 +136,7 @@ func (a *App) DoUpdate() string {
 		return "Не удалось записать апдейтер"
 	}
 	cmd := exec.Command("cmd", "/c", "start", "", "/min", bat)
+	hideWindow(cmd) // не показывать чёрную консоль апдейтера
 	if err := cmd.Start(); err != nil {
 		return "Не удалось запустить апдейтер"
 	}

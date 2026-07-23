@@ -16,10 +16,19 @@ import (
 // Диагностика через локальный контроллер sing-box (clash_api): какой канал
 // активен, какие отвечают, какие душатся. Всё по loopback, наружу не торчит.
 
-// directClient — HTTP-клиент БЕЗ системного прокси. Запросы к 127.0.0.1 (контроллер)
-// не должны уходить через прокси юзера — иначе диагностика молчит.
+// noProxyTransport — ОДИН общий транспорт без системного прокси. Переиспользуется
+// во всех клиентах (пробник, опрос каналов, логи), иначе новый Transport на каждый
+// вызов течёт соединениями/горутинами до «Not enough memory resources».
+var noProxyTransport = &http.Transport{
+	Proxy:               nil,
+	MaxIdleConns:        20,
+	MaxIdleConnsPerHost: 4,
+	IdleConnTimeout:     30 * time.Second,
+}
+
+// directClient — HTTP-клиент БЕЗ системного прокси (общий пул соединений).
 func directClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: nil}}
+	return &http.Client{Timeout: timeout, Transport: noProxyTransport}
 }
 
 // freeLoopbackAddr — свободный порт на 127.0.0.1 для контроллера. "" если не вышло.
