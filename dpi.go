@@ -38,6 +38,7 @@ var zapretPresets = []DPIPreset{
 type dpiEngine struct {
 	mu      sync.Mutex
 	cmd     *exec.Cmd
+	logFile *os.File
 	engine  string
 	preset  string
 	running bool
@@ -124,13 +125,18 @@ func (a *App) DPIStart(engine, preset string) string {
 	}
 	cmd := exec.Command(bin, args...)
 	hideWindow(cmd)
+	var logf *os.File
 	if f, err := os.OpenFile(dpiLogPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); err == nil {
 		cmd.Stdout, cmd.Stderr = f, f
+		logf = f
 	}
 	if err := cmd.Start(); err != nil {
+		if logf != nil {
+			logf.Close()
+		}
 		return "Не удалось запустить: " + err.Error()
 	}
-	dpi.cmd, dpi.engine, dpi.preset, dpi.running = cmd, engine, preset, true
+	dpi.cmd, dpi.logFile, dpi.engine, dpi.preset, dpi.running = cmd, logf, engine, preset, true
 	if engine == "byedpi" {
 		if err := setSysProxy("127.0.0.1:" + byedpiPort); err != nil {
 			a.log("Запрет: не смог выставить системный прокси: %v", err)
@@ -156,7 +162,10 @@ func (a *App) dpiStopLocked() {
 		dpi.cmd.Process.Kill()
 		dpi.cmd.Wait()
 	}
-	dpi.cmd, dpi.running = nil, false
+	if dpi.logFile != nil {
+		dpi.logFile.Close()
+	}
+	dpi.cmd, dpi.logFile, dpi.engine, dpi.preset, dpi.running = nil, nil, "", "", false
 }
 
 func dpiLogPath() string { return filepath.Join(os.TempDir(), "fortochka-zapret.log") }
