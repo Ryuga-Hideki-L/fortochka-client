@@ -13,6 +13,7 @@ import (
 
 // Profile — один сервер из подписки.
 type Profile struct {
+	Proto   string // vless (по умолчанию) / hysteria2 / tuic
 	Name    string
 	UUID    string
 	Server  string
@@ -27,18 +28,35 @@ type Profile struct {
 	Path    string
 	Host    string
 	Service string
+	// UDP-протоколы (hysteria2/tuic) — уходят от TCP-заморозки ТСПУ
+	Password string
+	Insecure bool
+	ALPN     string
+	Obfs     string // hysteria2: salamander
+	ObfsPass string
+	CC       string // tuic: congestion control (bbr)
+}
+
+// хотя бы одна прямая ссылка на сервер (не подписка) — парсим без скачивания.
+func hasDirectLink(s string) bool {
+	for _, sch := range []string{"vless://", "hysteria2://", "hy2://", "tuic://"} {
+		if strings.Contains(s, sch) {
+			return true
+		}
+	}
+	return false
 }
 
 func FetchProfiles(input string) ([]Profile, error) {
 	input = strings.TrimSpace(input)
 
-	// Прямые vless-ссылки (одна или несколько) — парсим сразу, БЕЗ скачивания.
+	// Прямые ссылки (vless/hysteria2/tuic, одна или несколько) — парсим сразу, БЕЗ скачивания.
 	// Спасает, когда сервер подписки недоступен (Gcore-edge зарезан у юзера).
-	if strings.Contains(input, "vless://") {
+	if hasDirectLink(input) {
 		if out := parseLines(input); len(out) > 0 {
 			return out, nil
 		}
-		return nil, errors.New("Не удалось разобрать vless-ссылку — проверьте, что скопировали целиком")
+		return nil, errors.New("Не удалось разобрать ссылку — проверьте, что скопировали её целиком")
 	}
 
 	// Иначе это ссылка-подписка — качаем.
@@ -55,15 +73,23 @@ func FetchProfiles(input string) ([]Profile, error) {
 	return parseLines(decodeMaybeBase64(string(raw))), nil
 }
 
-// parseLines вытаскивает все vless-профили из текста (переносы или пробелы между ссылками).
+// parseLines вытаскивает все профили из текста (переносы или пробелы между ссылками).
 func parseLines(s string) []Profile {
 	var out []Profile
 	for _, line := range strings.Split(s, "\n") {
 		for _, part := range strings.Fields(line) {
-			if strings.HasPrefix(part, "vless://") {
-				if p, ok := parseVless(part); ok {
-					out = append(out, p)
-				}
+			var p Profile
+			var ok bool
+			switch {
+			case strings.HasPrefix(part, "vless://"):
+				p, ok = parseVless(part)
+			case strings.HasPrefix(part, "hysteria2://"), strings.HasPrefix(part, "hy2://"):
+				p, ok = parseHy2(part)
+			case strings.HasPrefix(part, "tuic://"):
+				p, ok = parseTuic(part)
+			}
+			if ok {
+				out = append(out, p)
 			}
 		}
 	}
@@ -72,7 +98,7 @@ func parseLines(s string) []Profile {
 
 func decodeMaybeBase64(s string) string {
 	s = strings.TrimSpace(s)
-	if strings.Contains(s, "vless://") {
+	if hasDirectLink(s) {
 		return s
 	}
 	// некоторые сервера отдают base64 с переносами строк/пробелами — убираем перед декодом
@@ -81,7 +107,7 @@ func decodeMaybeBase64(s string) string {
 		base64.StdEncoding, base64.RawStdEncoding,
 		base64.URLEncoding, base64.RawURLEncoding,
 	} {
-		if b, err := enc.DecodeString(compact); err == nil && strings.Contains(string(b), "vless://") {
+		if b, err := enc.DecodeString(compact); err == nil && hasDirectLink(string(b)) {
 			return string(b)
 		}
 	}
@@ -112,6 +138,71 @@ func parseVless(link string) (Profile, bool) {
 		Service: q.Get("serviceName"),
 	}
 	if p.UUID == "" || p.Server == "" || p.Port == 0 {
+		return Profile{}, false
+	}
+	return p, true
+}
+
+// hysteria2://password@host:port?sni=..&insecure=1&obfs=salamander&obfs-password=..#name
+func parseHy2(link string) (Profile, bool) {
+	u, err := url.Parse(link)
+	if err != nil || u.Host == "" {
+		return Profile{}, false
+	}
+	port, _ := strconv.Atoi(u.Port())
+	if port == 0 {
+		port = 443
+	}
+	q := u.Query()
+	pass := ""
+	if u.User != nil {
+		pass = u.User.Username()
+		if pass == "" {
+			pass, _ = u.User.Password()
+		}
+	}
+	p := Profile{
+		Proto:    "hysteria2",
+		Name:     unescape(u.Fragment),
+		Server:   u.Hostname(),
+		Port:     port,
+		Password: pass,
+		SNI:      def(q.Get("sni"), u.Hostname()),
+		Insecure: q.Get("insecure") == "1" || q.Get("insecure") == "true",
+		Obfs:     q.Get("obfs"),
+		ObfsPass: q.Get("obfs-password"),
+	}
+	if p.Server == "" || p.Password == "" {
+		return Profile{}, false
+	}
+	return p, true
+}
+
+// tuic://uuid:password@host:port?sni=..&alpn=h3&congestion_control=bbr#name
+func parseTuic(link string) (Profile, bool) {
+	u, err := url.Parse(link)
+	if err != nil || u.User == nil || u.Host == "" {
+		return Profile{}, false
+	}
+	port, _ := strconv.Atoi(u.Port())
+	if port == 0 {
+		port = 443
+	}
+	q := u.Query()
+	pass, _ := u.User.Password()
+	p := Profile{
+		Proto:    "tuic",
+		Name:     unescape(u.Fragment),
+		UUID:     u.User.Username(),
+		Server:   u.Hostname(),
+		Port:     port,
+		Password: pass,
+		SNI:      def(q.Get("sni"), u.Hostname()),
+		ALPN:     def(q.Get("alpn"), "h3"),
+		CC:       def(q.Get("congestion_control"), "bbr"),
+		Insecure: q.Get("allow_insecure") == "1" || q.Get("insecure") == "1",
+	}
+	if p.UUID == "" || p.Server == "" {
 		return Profile{}, false
 	}
 	return p, true

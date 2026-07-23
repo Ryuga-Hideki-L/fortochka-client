@@ -23,55 +23,45 @@ func BuildConfig(profiles []Profile, sp Split) ([]byte, error) {
 	used := map[string]bool{}
 
 	for i, p := range profiles {
-		if p.Net == "xhttp" { // движок sing-box не поддерживает xhttp
+		proto := p.Proto
+		if proto == "" {
+			proto = "vless"
+		}
+		if proto == "vless" && p.Net == "xhttp" { // движок sing-box не поддерживает xhttp
 			continue
+		}
+		base := proto
+		if proto == "vless" {
+			base = p.Net
 		}
 		tag := p.Name
 		if tag == "" || used[tag] {
-			tag = fmt.Sprintf("%s-%d", p.Net, i)
+			tag = fmt.Sprintf("%s-%d", base, i)
 		}
 		used[tag] = true
 
-		ob := map[string]any{
-			"type":        "vless",
-			"tag":         tag,
-			"server":      p.Server,
-			"server_port": p.Port,
-			"uuid":        p.UUID,
-		}
-		if p.Flow != "" {
-			ob["flow"] = p.Flow
-		}
+		var ob map[string]any
+		resilient := false
 
-		tls := map[string]any{
-			"enabled":     true,
-			"server_name": nonEmpty(p.SNI, p.Server),
-			"utls":        map[string]any{"enabled": true, "fingerprint": p.FP},
-		}
-		if p.Sec == "reality" {
-			tls["reality"] = map[string]any{
-				"enabled":    true,
-				"public_key": p.PBK,
-				"short_id":   p.SID,
+		switch proto {
+		case "hysteria2":
+			ob = buildHy2(tag, p)
+			resilient = true // UDP/QUIC — вне TCP-заморозки ТСПУ
+		case "tuic":
+			ob = buildTuic(tag, p)
+			resilient = true // UDP/QUIC — вне TCP-заморозки ТСПУ
+		default: // vless
+			ob = buildVless(tag, p)
+			// Мультиплексные транспорты (один h2/ws-канал) не палятся «Сигналом 3» ТСПУ
+			// (>3 параллельных TLS к одному SNI → фриз ~120с). Сырой tcp/Vision — палится.
+			if p.Net == "grpc" || p.Net == "ws" || p.Net == "http" || p.Net == "httpupgrade" {
+				resilient = true
 			}
 		}
-		ob["tls"] = tls
 
-		switch p.Net {
-		case "ws":
-			t := map[string]any{"type": "ws", "path": p.Path}
-			t["headers"] = map[string]any{"Host": nonEmpty(p.Host, p.Server)}
-			ob["transport"] = t
-		case "grpc":
-			ob["transport"] = map[string]any{"type": "grpc", "service_name": def(p.Service, "grpc")}
-		}
-
-		// Мультиплексные транспорты (один h2/ws-канал) не палятся «Сигналом 3» ТСПУ
-		// (>3 параллельных TLS к одному SNI → фриз ~120с). Сырой tcp/Vision — палится.
-		if p.Net == "grpc" || p.Net == "ws" || p.Net == "http" || p.Net == "httpupgrade" {
+		if resilient {
 			resilientTags = append(resilientTags, tag)
 		}
-
 		outbounds = append(outbounds, ob)
 		tags = append(tags, tag)
 	}
@@ -170,6 +160,84 @@ func buildRoute(sp Split) []map[string]any {
 		rules = append(rules, map[string]any{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "outbound": "direct"})
 	}
 	return rules
+}
+
+func buildVless(tag string, p Profile) map[string]any {
+	ob := map[string]any{
+		"type":        "vless",
+		"tag":         tag,
+		"server":      p.Server,
+		"server_port": p.Port,
+		"uuid":        p.UUID,
+	}
+	if p.Flow != "" {
+		ob["flow"] = p.Flow
+	}
+	tls := map[string]any{
+		"enabled":     true,
+		"server_name": nonEmpty(p.SNI, p.Server),
+		"utls":        map[string]any{"enabled": true, "fingerprint": p.FP},
+	}
+	if p.Sec == "reality" {
+		tls["reality"] = map[string]any{
+			"enabled":    true,
+			"public_key": p.PBK,
+			"short_id":   p.SID,
+		}
+	}
+	ob["tls"] = tls
+	switch p.Net {
+	case "ws":
+		ob["transport"] = map[string]any{
+			"type":    "ws",
+			"path":    p.Path,
+			"headers": map[string]any{"Host": nonEmpty(p.Host, p.Server)},
+		}
+	case "grpc":
+		ob["transport"] = map[string]any{"type": "grpc", "service_name": def(p.Service, "grpc")}
+	}
+	return ob
+}
+
+func buildHy2(tag string, p Profile) map[string]any {
+	ob := map[string]any{
+		"type":        "hysteria2",
+		"tag":         tag,
+		"server":      p.Server,
+		"server_port": p.Port,
+		"password":    p.Password,
+		"tls": map[string]any{
+			"enabled":     true,
+			"server_name": nonEmpty(p.SNI, p.Server),
+			"insecure":    p.Insecure,
+		},
+	}
+	if p.Obfs == "salamander" && p.ObfsPass != "" {
+		ob["obfs"] = map[string]any{"type": "salamander", "password": p.ObfsPass}
+	}
+	return ob
+}
+
+func buildTuic(tag string, p Profile) map[string]any {
+	tls := map[string]any{
+		"enabled":     true,
+		"server_name": nonEmpty(p.SNI, p.Server),
+		"insecure":    p.Insecure,
+	}
+	if p.ALPN != "" {
+		tls["alpn"] = []string{p.ALPN}
+	}
+	return map[string]any{
+		"type":               "tuic",
+		"tag":                tag,
+		"server":             p.Server,
+		"server_port":        p.Port,
+		"uuid":               p.UUID,
+		"password":           p.Password,
+		"congestion_control": def(p.CC, "bbr"),
+		"udp_relay_mode":     "native",
+		"tls":                tls,
+	}
 }
 
 func nonEmpty(a, b string) string {

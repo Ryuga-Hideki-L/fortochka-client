@@ -44,7 +44,7 @@ _Снимок на 2026-07-22. Персональный анти-цензурн�
 - **`/opt/fortochka-cab/cab.py`** (юзер fortochka) — API кабинета. `all_subs()` кэш 15 сек, `me(subid)`.
   - do_GET `/api/me?sub=` И do_POST `/api/me` (JSON body). Фронт использует POST.
 - **`/opt/fortochka-gate/gate.py`** — Panel (CSRF-логин к 3x-ui): create/edit/delete/toggle/reset лимитов.
-  - config.json: panel_pass=REDACTED, sub_base=`https://vpn.rungvard.net/sub/`, admin_token.
+  - config.json: panel_pass / admin_token (значения — на сервере), sub_base=`https://vpn.rungvard.net/sub/`.
 - **nginx** `/etc/nginx/sites-available/rungvard.net`: :4444 https (захардонен Codex).
   - `location /fortochka/` + sub_filter вставляет `ver.js` (переживает redeploy Андрея).
 - Транспорты: VLESS+Reality прямой (порты 40443/46443/47443), VLESS+WS+TLS за Gcore CDN
@@ -77,7 +77,7 @@ _Снимок на 2026-07-22. Персональный анти-цензурн�
 - Zombie-sing-box race → проверка stop-канала после engine.Start.
 - CDN-default залипание (Дусик: `dial 81.28.12.12:443 i/o timeout`, застревал на мёртвом CDN) → откат к urltest auto (v1.0.10).
 - base64 с пробелами/переносами → strings.Fields перед декодом.
-- Панель-пароль рассинхрон → panel_pass=REDACTED в gate config.
+- Панель-пароль рассинхрон → синхронизировать panel_pass в gate config (значение на сервере).
 
 ---
 
@@ -99,10 +99,21 @@ _Снимок на 2026-07-22. Персональный анти-цензурн�
 
 ---
 
+## 4.5 Мульти-протокол + failover (сделано 2026-07-23)
+- **Клиент**: парсит `vless://` + `hysteria2://` + `tuic://` (core/subscription.go, config.go).
+  UDP-протоколы (hy2/tuic) и мультиплекс-транспорты (grpc/ws) идут в auto-пул urltest → авто-failover.
+  AmneziaWG mainline sing-box НЕ умеет (нужен форк) — для AWG отдельно AmneziaVPN-приложение.
+- **Сервер Hysteria2**: systemd `fortochka-hy2`, UDP :443, salamander-обфускация, cert `141-95-67-176.sslip.io`.
+  Креды в `/opt/fortochka-hy2/creds.json` (root, chmod 600). Общий пароль на всех (личный VPN на 10 человек).
+- **fdge.serve_sub**: (1) чинит `@localhost`→реальный IP для Reality-инбаундов; (2) дописывает hy2-ссылку
+  в каждую подписку. Значит все клиенты авто-получают UDP-фейловер.
+- **Панель gate**: кнопка «Ссылки» у каждого клиента (`/api/links`) — показывает vless/подписку/hiddify.
+
 ## 5. Правила безопасности (жёстко)
 - VPS СТРОГО только под Fortochka; чужую Pterodactyl-панель Кента не сносить/менять без спроса.
-- SSH — бокс Кента; парольная авторизация должна оставаться ВКЛючена (пароль Кента `REDACTED`).
-- Ключ управления: `/home/reserve/.ssh/fortochka_mgmt`, юзер ubuntu@141.95.67.176.
+- SSH — бокс Кента; парольная авторизация должна оставаться ВКЛючена (пароль — в приватных заметках, НЕ в репе).
+- Ключ управления — приватный SSH-ключ (путь в приватных заметках).
+- Все креды (пароль панели, admin_token, hy2-пароль) — только в `config.json`/`creds.json` НА СЕРВЕРЕ, НИКОГДА в публичной репе.
 - На публичном сайте — ни слова «VPN».
 - Дизайн: юзер ненавидит шаблонный «AI-дизайн», неон; хочет оригинал уровня Linear/Vercel.
 - Коммиты — под именем юзера (GitHub Ryuga-Hideki-L).
