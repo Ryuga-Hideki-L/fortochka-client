@@ -204,6 +204,33 @@ func (a *App) logChannels() {
 	}
 }
 
+// SelfTest — кнопка «Тест»: прогон проверки исправности для UI.
+func (a *App) SelfTest() map[string]any {
+	res := map[string]any{"connected": a.State() == "connected"}
+	if a.State() != "connected" {
+		res["ok"] = false
+		res["message"] = "VPN не подключён — сначала нажмите «Подключиться»"
+		return res
+	}
+	tunnel := a.probe(6 * time.Second)
+	res["tunnel"] = tunnel
+	res["active"] = a.activeChannel()
+	var chans []map[string]any
+	for _, tag := range a.autoChannels() {
+		ms, ok := a.testChannel(tag)
+		chans = append(chans, map[string]any{"tag": tag, "ms": ms, "ok": ok})
+	}
+	res["channels"] = chans
+	res["exitIP"] = a.ExitIP()
+	res["ok"] = tunnel
+	if tunnel {
+		res["message"] = "Всё работает — трафик идёт через туннель"
+	} else {
+		res["message"] = "Туннель не отвечает — смените сервер/протокол"
+	}
+	return res
+}
+
 // noteChannelSwitch логирует смену активного канала (failover).
 func (a *App) noteChannelSwitch() {
 	now := a.activeChannel()
