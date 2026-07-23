@@ -58,6 +58,7 @@ func (a *App) CheckUpdate() UpdateInfo {
 		} `json:"assets"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&rel) != nil {
+		a.setUpd("не удалось проверить обновления (ответ GitHub не разобран)")
 		return ui
 	}
 	ui.Latest = strings.TrimPrefix(rel.TagName, "v")

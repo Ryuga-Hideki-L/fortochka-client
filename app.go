@@ -31,6 +31,7 @@ type App struct {
 	lastChan    string        // последний активный канал (для лога переключений)
 	updNote     string        // статус обновления с последней проверки (для лога)
 	clashAddr   string        // адрес локального контроллера sing-box этой сессии
+	gen         uint64        // счётчик сессий подключения — защита от гонок Connect/Disconnect
 }
 
 type settings struct {
@@ -58,6 +59,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.engine.Stop()
+	a.DPIStop() // снять системный прокси и убить byedpi/winws, чтобы не осиротели
 }
 
 func configDir() string {
@@ -153,6 +155,13 @@ func (a *App) setState(s string) {
 	runtime.EventsEmit(a.ctx, "state", s)
 }
 
+// superseded — эту сессию подключения сменил другой Connect/Disconnect (по счётчику gen).
+func (a *App) superseded(myGen uint64) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.gen != myGen
+}
+
 func logPath() string { return filepath.Join(configDir(), "fortochka.log") }
 
 func (a *App) log(format string, args ...any) {
@@ -179,10 +188,22 @@ func (a *App) GetLogs() string {
 
 func (a *App) Connect() string {
 	a.mu.Lock()
+	if a.state == "connecting" { // уже идёт подключение — игнорируем повторное нажатие
+		a.mu.Unlock()
+		return ""
+	}
+	a.gen++
+	myGen := a.gen
+	a.state = "connecting"
 	link := a.link
 	sp := core.Split{BypassRu: a.bypassRu, Apps: a.bypassApps, Sites: a.bypassSites}
+	un := a.updNote
+	a.lastChan = ""
 	a.mu.Unlock()
+	runtime.EventsEmit(a.ctx, "state", "connecting")
+
 	if link == "" {
+		a.setState("disconnected")
 		return "Вставьте ссылку подписки"
 	}
 	// Zapret (WinDivert) конфликтует с TUN-туннелем — глушим его перед VPN. ByeDPI не мешает.
@@ -194,16 +215,11 @@ func (a *App) Connect() string {
 	}
 	// новый журнал на сессию
 	os.WriteFile(logPath(), []byte(fmt.Sprintf("%s  === подключение ===\n", time.Now().Format("15:04:05"))), 0o600)
-	a.mu.Lock()
-	a.lastChan = ""
-	un := a.updNote
-	a.mu.Unlock()
 	a.log("Форточка %s · %s", version, osArch())
 	if un != "" {
 		a.log("%s", un)
 	}
 	a.log("источник: %s", sourceDesc(link))
-	a.setState("connecting")
 
 	a.log("скачиваю/разбираю ссылку…")
 	profiles, err := core.FetchProfiles(link)
@@ -238,6 +254,9 @@ func (a *App) Connect() string {
 		a.setState("disconnected")
 		return err.Error()
 	}
+	if a.superseded(myGen) { // пока качали/строили — юзер нажал «Отключить»
+		return ""
+	}
 	if err := a.engine.Start(cfg, logPath()); err != nil {
 		a.log("движок: %s", err)
 		a.setState("disconnected")
@@ -248,10 +267,18 @@ func (a *App) Connect() string {
 	// Не показываем «Подключено», пока реально не вышли через туннель.
 	// Если туннель мёртв — strict_route блокирует трафик, проверка не пройдёт.
 	if !a.probe(12 * time.Second) {
-		a.log("туннель не поднялся — нет ответа через VPN")
 		a.engine.Stop()
+		if a.superseded(myGen) {
+			return ""
+		}
+		a.log("туннель не поднялся — нет ответа через VPN")
 		a.setState("disconnected")
 		return "Не удалось выйти в сеть через VPN. Проверьте ссылку или смените сервер."
+	}
+	// нас мог сменить Disconnect, пока шёл пробник — не поднимаем «connected» поверх
+	if a.superseded(myGen) {
+		a.engine.Stop()
+		return ""
 	}
 	a.log("туннель проверен, соединение активно")
 	a.logChannels()
@@ -261,7 +288,7 @@ func (a *App) Connect() string {
 	stop := make(chan struct{})
 	a.healthStop = stop
 	a.mu.Unlock()
-	go a.healthLoop(stop)
+	go a.healthLoop(stop, myGen)
 
 	a.setState("connected")
 	return ""
@@ -269,6 +296,7 @@ func (a *App) Connect() string {
 
 func (a *App) Disconnect() {
 	a.mu.Lock()
+	a.gen++ // помечаем: любая идущая Connect-сессия устарела
 	if a.healthStop != nil {
 		close(a.healthStop)
 		a.healthStop = nil
@@ -304,7 +332,7 @@ func (a *App) probe(within time.Duration) bool {
 }
 
 // healthLoop раз в 30с проверяет живость туннеля и переподключает при обрыве.
-func (a *App) healthLoop(stop chan struct{}) {
+func (a *App) healthLoop(stop chan struct{}, myGen uint64) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	fails := 0
@@ -313,7 +341,7 @@ func (a *App) healthLoop(stop chan struct{}) {
 		case <-stop:
 			return
 		case <-ticker.C:
-			if a.State() != "connected" {
+			if a.superseded(myGen) || a.State() != "connected" {
 				return
 			}
 			if a.probe(5 * time.Second) {
@@ -324,7 +352,7 @@ func (a *App) healthLoop(stop chan struct{}) {
 			fails++
 			a.log("проверка связи не прошла (%d/2)", fails)
 			if fails >= 2 {
-				a.reconnect(stop)
+				a.reconnect(stop, myGen)
 				fails = 0
 			}
 		}
@@ -333,11 +361,14 @@ func (a *App) healthLoop(stop chan struct{}) {
 
 // reconnect перезапускает движок тем же конфигом. При неудаче трафик остаётся
 // заблокированным kill-switch'ем (strict_route) — утечки нет.
-func (a *App) reconnect(stop chan struct{}) {
+func (a *App) reconnect(stop chan struct{}, myGen uint64) {
 	select {
 	case <-stop: // уже отключились вручную
 		return
 	default:
+	}
+	if a.superseded(myGen) {
+		return
 	}
 	a.mu.Lock()
 	cfg := a.cfg
@@ -361,11 +392,16 @@ func (a *App) reconnect(stop chan struct{}) {
 		return
 	default:
 	}
+	if a.superseded(myGen) {
+		a.engine.Stop()
+		return
+	}
 	if a.probe(12 * time.Second) {
 		a.log("переподключено")
 		a.logChannels()
 	} else {
 		a.log("реконнект не удался — трафик заблокирован (нет утечки)")
+		a.setState("disconnected")
 	}
 }
 

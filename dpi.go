@@ -104,8 +104,8 @@ func (a *App) DPIStart(engine, preset string) string {
 	if engine != "zapret" {
 		engine = "byedpi"
 	}
-	// Zapret (WinDivert) конфликтует с TUN-туннелем — не даём запускать одновременно.
-	if engine == "zapret" && a.State() == "connected" {
+	// Zapret (WinDivert) конфликтует с TUN-туннелем — не даём запускать при активном/поднимающемся VPN.
+	if engine == "zapret" && a.State() != "disconnected" {
 		return "Zapret нельзя вместе с VPN — сначала отключите VPN (или выберите ByeDPI)"
 	}
 	bin := dpiBin(engine)

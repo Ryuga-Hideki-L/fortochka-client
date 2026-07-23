@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -35,7 +36,8 @@ func Resilient(p Profile) bool {
 	if net.ParseIP(p.Server) != nil {
 		return false // прямой на IP датацентра — морозится по объёму
 	}
-	return p.Net == "grpc" || p.Net == "ws" || p.Net == "http" || p.Net == "httpupgrade"
+	// только транспорты, которые реально собирает buildVless (ws/grpc)
+	return p.Net == "grpc" || p.Net == "ws"
 }
 
 // BuildConfig собирает конфиг sing-box из профилей подписки:
@@ -46,6 +48,7 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 	var tags []string
 	var resilientTags []string // каналы вне заморозки ТСПУ: UDP (hy2/tuic) + CDN-домен (ws)
 	used := map[string]bool{}
+	reserved := map[string]bool{"auto": true, "proxy": true, "direct": true} // служебные теги — имя профиля не должно совпадать
 
 	for i, p := range profiles {
 		proto := p.Proto
@@ -60,7 +63,7 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 			base = p.Net
 		}
 		tag := p.Name
-		if tag == "" || used[tag] {
+		if tag == "" || used[tag] || reserved[tag] {
 			tag = fmt.Sprintf("%s-%d", base, i)
 		}
 		used[tag] = true
@@ -144,11 +147,13 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 			"type":           "tun",
 			"tag":            "tun-in",
 			"interface_name": "fortochka",
-			"address":        []string{"172.19.0.1/30"},
-			"mtu":            1400, // под Reality/TLS-заголовки — без фрагментации
-			"auto_route":     true,
-			"strict_route":   true, // kill-switch: трафик не может обойти туннель
-			"stack":          "system",
+			// оба семейства в одном массиве (sing-box 1.12+): без IPv6-адреса strict_route
+			// не перехватывает IPv6 → трафик утекает мимо туннеля.
+			"address":      []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
+			"mtu":          1400, // под Reality/TLS-заголовки — без фрагментации
+			"auto_route":   true,
+			"strict_route": true, // kill-switch: трафик не может обойти туннель
+			"stack":        "system",
 		}},
 		"outbounds": all,
 		"route": map[string]any{
@@ -257,16 +262,26 @@ func buildHy2(tag string, p Profile) map[string]any {
 }
 
 // hopRange нормализует "20000-40000" (или "20000:40000") в формат sing-box "20000:40000".
+// Возвращает "" на любой некорректный ввод (не два числа) — иначе sing-box упадёт на старте.
 func hopRange(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""
 	}
-	s = strings.ReplaceAll(s, "-", ":")
-	if !strings.Contains(s, ":") {
+	sep := "-"
+	if strings.Contains(s, ":") {
+		sep = ":"
+	}
+	parts := strings.Split(s, sep)
+	if len(parts) != 2 {
 		return ""
 	}
-	return s
+	a, e1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	b, e2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if e1 != nil || e2 != nil || a <= 0 || b <= 0 || a > b || b > 65535 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", a, b)
 }
 
 func buildTuic(tag string, p Profile) map[string]any {
