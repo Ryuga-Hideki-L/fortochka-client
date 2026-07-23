@@ -35,6 +35,7 @@ type Profile struct {
 	Obfs     string // hysteria2: salamander
 	ObfsPass string
 	CC       string // tuic: congestion control (bbr)
+	PortHop  string // hysteria2: диапазон портов "20000-40000" (прыжки против per-port throttle)
 }
 
 // хотя бы одна прямая ссылка на сервер (не подписка) — парсим без скачивания.
@@ -191,6 +192,7 @@ func parseHy2(link string) (Profile, bool) {
 		Insecure: q.Get("insecure") == "1" || q.Get("insecure") == "true",
 		Obfs:     q.Get("obfs"),
 		ObfsPass: q.Get("obfs-password"),
+		PortHop:  q.Get("mport"), // диапазон портов для прыжков, напр. 20000-40000
 	}
 	if p.Server == "" || p.Password == "" {
 		return Profile{}, false

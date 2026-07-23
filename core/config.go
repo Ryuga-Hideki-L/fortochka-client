@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 )
 
 // Split — настройки раздельного туннелирования (что идёт мимо Форточки).
@@ -226,21 +227,41 @@ func buildVless(tag string, p Profile) map[string]any {
 
 func buildHy2(tag string, p Profile) map[string]any {
 	ob := map[string]any{
-		"type":        "hysteria2",
-		"tag":         tag,
-		"server":      p.Server,
-		"server_port": p.Port,
-		"password":    p.Password,
+		"type":     "hysteria2",
+		"tag":      tag,
+		"server":   p.Server,
+		"password": p.Password,
 		"tls": map[string]any{
 			"enabled":     true,
 			"server_name": nonEmpty(p.SNI, p.Server),
 			"insecure":    p.Insecure,
 		},
 	}
+	// port-hopping: клиент прыгает по диапазону портов (сервер редиректит их на 443),
+	// обходит per-port UDP-throttle ТСПУ. server_ports и server_port взаимоисключающие.
+	if hop := hopRange(p.PortHop); hop != "" {
+		ob["server_ports"] = []string{hop}
+		ob["hop_interval"] = "30s"
+	} else {
+		ob["server_port"] = p.Port
+	}
 	if p.Obfs == "salamander" && p.ObfsPass != "" {
 		ob["obfs"] = map[string]any{"type": "salamander", "password": p.ObfsPass}
 	}
 	return ob
+}
+
+// hopRange нормализует "20000-40000" (или "20000:40000") в формат sing-box "20000:40000".
+func hopRange(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.ReplaceAll(s, "-", ":")
+	if !strings.Contains(s, ":") {
+		return ""
+	}
+	return s
 }
 
 func buildTuic(tag string, p Profile) map[string]any {
