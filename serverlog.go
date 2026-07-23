@@ -2,12 +2,32 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
+
+// deviceID — стабильный случайный ID машины (для логов прямых вставок без подписки).
+func deviceID() string {
+	p := filepath.Join(configDir(), "fortochka.id")
+	if b, err := os.ReadFile(p); err == nil {
+		if s := strings.TrimSpace(string(b)); len(s) >= 6 {
+			return s
+		}
+	}
+	buf := make([]byte, 5)
+	if _, err := rand.Read(buf); err != nil {
+		return "unknown"
+	}
+	id := hex.EncodeToString(buf)
+	os.WriteFile(p, []byte(id), 0o600)
+	return id
+}
 
 // subIDFromLink вытаскивает subId из ссылки-подписки (…/sub/<subid>).
 // Пусто — если это прямая vless-вставка без подписки (тогда лог не шлём).
@@ -37,7 +57,7 @@ func (a *App) pushLog() {
 func (a *App) sendLogToServer(link string) {
 	subid := subIDFromLink(link)
 	if subid == "" {
-		return
+		subid = "dev-" + deviceID() // прямая вставка без подписки — шлём под ID устройства
 	}
 	body, err := os.ReadFile(logPath())
 	if err != nil || len(body) == 0 {
