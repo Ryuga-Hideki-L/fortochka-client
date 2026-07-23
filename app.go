@@ -200,6 +200,13 @@ func (a *App) Connect() string {
 
 	a.log("скачиваю/разбираю ссылку…")
 	profiles, err := core.FetchProfiles(link)
+	if (err != nil || len(profiles) == 0) && fallbackSub != "" {
+		// подписка недоступна (Gcore лёг / домен зарезан) — встроенный резерв
+		if fb := embeddedFallback(); len(fb) > 0 {
+			a.log("подписка недоступна — включаю встроенный резерв (%d профилей)", len(fb))
+			profiles, err = fb, nil
+		}
+	}
 	if err != nil {
 		a.log("подписка: %s", err)
 		a.setState("disconnected")

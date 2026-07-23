@@ -1,9 +1,12 @@
 package core
 
 import (
+	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -62,7 +65,11 @@ func FetchProfiles(input string) ([]Profile, error) {
 
 	// Иначе это ссылка-подписка — качаем. CDN (Gcore Free) периодически флапает
 	// (502/таймаут), поэтому пробуем несколько раз — обычно одна из попыток проходит.
-	client := &http.Client{Timeout: 10 * time.Second}
+	subHost := ""
+	if u, err := url.Parse(input); err == nil {
+		subHost = u.Hostname()
+	}
+	client := subClient(subHost) // резолв домена через DoH (обход DNS-блока), без системного прокси
 	var raw []byte
 	var lastErr error
 	for attempt := 0; attempt < 4; attempt++ {
@@ -92,6 +99,60 @@ func FetchProfiles(input string) ([]Profile, error) {
 		return nil, errors.New("Не удалось скачать подписку — CDN недоступен, попробуйте ещё раз или вставьте прямую ссылку")
 	}
 	return parseLines(decodeMaybeBase64(string(raw))), nil
+}
+
+// dohResolve резолвит host в IPv4 через DoH (Cloudflare/Google), обходя ISP-DNS,
+// который в РФ часто блокирует/спуфит домен подписки. "" если DoH недоступен.
+func dohResolve(host string) string {
+	if host == "" || net.ParseIP(host) != nil {
+		return "" // уже IP или пусто — резолв не нужен
+	}
+	type dnsResp struct {
+		Answer []struct {
+			Type int    `json:"type"`
+			Data string `json:"data"`
+		} `json:"Answer"`
+	}
+	endpoints := []string{
+		"https://1.1.1.1/dns-query?type=A&name=",
+		"https://dns.google/resolve?type=A&name=",
+	}
+	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	for _, ep := range endpoints {
+		req, err := http.NewRequest("GET", ep+url.QueryEscape(host), nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Accept", "application/dns-json")
+		resp, err := c.Do(req)
+		if err != nil {
+			continue
+		}
+		var d dnsResp
+		json.NewDecoder(resp.Body).Decode(&d)
+		resp.Body.Close()
+		for _, a := range d.Answer {
+			if a.Type == 1 && net.ParseIP(a.Data) != nil { // 1 = A-запись
+				return a.Data
+			}
+		}
+	}
+	return ""
+}
+
+// subClient — http-клиент для скачивания подписки: резолвит домен через DoH
+// (SNI при этом сохраняется), не ходит через системный прокси.
+func subClient(host string) *http.Client {
+	tr := &http.Transport{Proxy: nil}
+	if ip := dohResolve(host); ip != "" {
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if h, port, err := net.SplitHostPort(addr); err == nil && h == host {
+				addr = net.JoinHostPort(ip, port)
+			}
+			return (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, network, addr)
+		}
+	}
+	return &http.Client{Timeout: 10 * time.Second, Transport: tr}
 }
 
 // parseLines вытаскивает все профили из текста (переносы или пробелы между ссылками).
