@@ -59,16 +59,36 @@ func FetchProfiles(input string) ([]Profile, error) {
 		return nil, errors.New("Не удалось разобрать ссылку — проверьте, что скопировали её целиком")
 	}
 
-	// Иначе это ссылка-подписка — качаем.
-	client := &http.Client{Timeout: 12 * time.Second}
-	resp, err := client.Get(input)
-	if err != nil {
-		return nil, errors.New("Не удалось скачать подписку — проверьте ссылку и интернет")
+	// Иначе это ссылка-подписка — качаем. CDN (Gcore Free) периодически флапает
+	// (502/таймаут), поэтому пробуем несколько раз — обычно одна из попыток проходит.
+	client := &http.Client{Timeout: 10 * time.Second}
+	var raw []byte
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		resp, err := client.Get(input)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			lastErr = errors.New("сервер подписки вернул " + strconv.Itoa(resp.StatusCode))
+			continue
+		}
+		raw, err = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		break
 	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
+	if raw == nil {
+		_ = lastErr
+		return nil, errors.New("Не удалось скачать подписку — CDN недоступен, попробуйте ещё раз или вставьте прямую ссылку")
 	}
 	return parseLines(decodeMaybeBase64(string(raw))), nil
 }
