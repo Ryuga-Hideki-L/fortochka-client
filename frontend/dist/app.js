@@ -127,6 +127,66 @@ async function doUpdate() {
   }
 }
 
+async function fillPresets() {
+  try {
+    const presets = await api().DPIPresets(el("zEngine").value);
+    const sel = el("zPreset");
+    sel.innerHTML = "";
+    (presets || []).forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = p.name;
+      sel.appendChild(o);
+    });
+  } catch (e) {}
+}
+async function refreshZStatus() {
+  try {
+    const s = await api().DPIStatus();
+    const on = !!(s && s.running);
+    el("zStatus").textContent = on ? "Включено · " + (s.engine || "") + " / " + (s.preset || "") : "Выключено";
+    el("zStatus").classList.toggle("on", on);
+    el("zToggle").textContent = on ? "Выключить" : "Включить";
+  } catch (e) {}
+}
+async function openZapret() {
+  await fillPresets();
+  await refreshZStatus();
+  el("zapretsheet").classList.remove("hidden");
+}
+function closeZapret() {
+  el("zapretsheet").classList.add("hidden");
+}
+async function toggleZapret() {
+  try {
+    const s = await api().DPIStatus();
+    if (s && s.running) {
+      await api().DPIStop();
+    } else {
+      const err = await api().DPIStart(el("zEngine").value, el("zPreset").value);
+      if (err) {
+        toast(err);
+        return;
+      }
+      toast("Запрет включён");
+    }
+    await refreshZStatus();
+  } catch (e) {}
+}
+
+async function runTest() {
+  toast("Проверяю…");
+  try {
+    const r = await api().SelfTest();
+    if (!r) return;
+    let msg = r.message || (r.ok ? "Работает" : "Проблема");
+    if (r.active) msg += " · " + r.active;
+    toast(msg);
+  } catch (e) {
+    toast("Тест не удался");
+  }
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   el("power").onclick = togglePower;
   el("gear").onclick = openSheet;
@@ -138,6 +198,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   el("logcopy").onclick = copyLogs;
 
   el("updbtn").onclick = doUpdate;
+
+  el("zapret").onclick = openZapret;
+  el("zClose").onclick = closeZapret;
+  el("zEngine").onchange = fillPresets;
+  el("zToggle").onclick = toggleZapret;
+  el("test").onclick = runTest;
 
   window.runtime.EventsOn("state", setUI);
 

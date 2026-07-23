@@ -35,6 +35,32 @@ jobs:
           Expand-Archive sb.zip -DestinationPath sbdir -Force
           $sb = (Get-ChildItem sbdir -Recurse -Filter sing-box.exe | Select-Object -First 1).FullName
           Copy-Item $sb build/bin/
+      - name: Bundle DPI engines (byedpi + zapret)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          try {
+            $bd = (Invoke-RestMethod https://api.github.com/repos/hufrea/byedpi/releases/latest).assets |
+              Where-Object { $_.name -match 'win' -and $_.name -match '\.zip$' } | Select-Object -First 1
+            if ($bd) {
+              Invoke-WebRequest $bd.browser_download_url -OutFile bd.zip
+              Expand-Archive bd.zip -DestinationPath bddir -Force
+              $x = (Get-ChildItem bddir -Recurse -Filter byedpi.exe | Select-Object -First 1)
+              if ($x) { Copy-Item $x.FullName build/bin/ }
+            }
+          } catch { Write-Host "byedpi bundle skipped: $_" }
+          try {
+            $zp = (Invoke-RestMethod https://api.github.com/repos/bol-van/zapret/releases/latest).assets |
+              Where-Object { $_.name -match 'win' -and $_.name -match '\.zip$' } | Select-Object -First 1
+            if ($zp) {
+              Invoke-WebRequest $zp.browser_download_url -OutFile zp.zip
+              Expand-Archive zp.zip -DestinationPath zpdir -Force
+              foreach ($n in 'winws.exe','WinDivert.dll','WinDivert64.sys') {
+                $f = (Get-ChildItem zpdir -Recurse -Filter $n | Select-Object -First 1)
+                if ($f) { Copy-Item $f.FullName build/bin/ }
+              }
+            }
+          } catch { Write-Host "zapret bundle skipped: $_" }
       - name: Sign binaries (only if a cert is configured)
         if: env.HAS_CERT == 'true'
         shell: pwsh

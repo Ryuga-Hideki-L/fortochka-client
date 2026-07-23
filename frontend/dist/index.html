@@ -18,6 +18,14 @@
     .updbar button{background:#4fd1c5;border:none;color:#06201d;font:inherit;font-weight:700;font-size:12.5px;padding:5px 12px;border-radius:7px;cursor:pointer}
     .updbar button:hover{filter:brightness(1.06)}
     .updbar button:disabled{opacity:.6;cursor:default}
+    .testbtn{margin-top:14px;background:none;border:1px solid rgba(255,255,255,.18);color:#9aa3b2;
+      font:inherit;font-size:13px;padding:8px 16px;border-radius:9px;cursor:pointer;transition:.15s}
+    .testbtn:hover{border-color:rgba(79,209,197,.5);color:#cdeeea}
+    .zselect{width:100%;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.14);border-radius:8px;
+      color:#e8ecf1;font:inherit;font-size:13.5px;padding:10px 11px;margin-bottom:4px;outline:none;cursor:pointer}
+    .zselect:focus{border-color:#4fd1c5}
+    .zstatus{margin:14px 0 4px;font-size:13px;color:#8a93a3;text-align:center}
+    .zstatus.on{color:#4fd1c5}
   </style>
 </head>
 <body>
@@ -28,6 +36,11 @@
         Fortochka
       </div>
       <div class="tools">
+        <button class="gear" id="zapret" title="Запрет — обход без VPN" aria-label="Запрет">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7">
+            <circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>
+          </svg>
+        </button>
         <button class="gear" id="logs" title="Логи" aria-label="Логи">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7">
             <path d="M4 5h16M4 10h16M4 15h10M4 20h6"/>
@@ -58,9 +71,29 @@
       <div class="sub" id="sub">Нажмите, чтобы подключиться</div>
 
       <button class="power" id="power">Подключиться</button>
+      <button class="testbtn" id="test">Проверить соединение</button>
     </main>
 
     <footer class="foot" id="foot"></footer>
+  </div>
+
+  <div class="sheet hidden" id="zapretsheet">
+    <div class="sheet-card">
+      <div class="sheet-title">Запрет — обход без VPN</div>
+      <p class="sheet-hint">Расшивает замедление YouTube/Discord и заблокированные сайты прямо на компьютере, без туннеля. Если VPN не нужен — включи это.</p>
+      <label class="split-label">Движок</label>
+      <select id="zEngine" class="zselect">
+        <option value="byedpi">ByeDPI — без драйвера, можно вместе с VPN</option>
+        <option value="zapret">Zapret — мощнее, нужен админ, вместо VPN</option>
+      </select>
+      <label class="split-label">Стратегия <small>(если не помогает — попробуй другую)</small></label>
+      <select id="zPreset" class="zselect"></select>
+      <div class="zstatus" id="zStatus">Выключено</div>
+      <div class="sheet-row">
+        <button class="ghost" id="zClose">Закрыть</button>
+        <button class="save" id="zToggle">Включить</button>
+      </div>
+    </div>
   </div>
 
   <div class="sheet hidden" id="sheet">
