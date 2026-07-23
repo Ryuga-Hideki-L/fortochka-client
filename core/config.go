@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 )
 
 // Split — настройки раздельного туннелирования (что идёт мимо Форточки).
@@ -17,12 +18,21 @@ type Split struct {
 // подбирается динамически (свободный), чтобы не падать на занятом порту.
 const ClashAPIAddr = "127.0.0.1:19090"
 
-// Resilient — устойчив ли транспорт к «Сигналу 3» ТСПУ (заморозка по параллельным TLS).
-// UDP-протоколы (hysteria2/tuic) и мультиплекс-транспорты (grpc/ws/http) — да; сырой tcp/Vision — нет.
+// Resilient — уходит ли канал от заморозки ТСПУ, и потому годится в авто-выбор.
+// От заморозки датацентра (TCP на «подозрительный» IP, фриз после ~15-20 КБ) спасают:
+//   - UDP-протоколы (hysteria2/tuic) — вне TCP-механизма вовсе;
+//   - транспорт за CDN (сервер — ДОМЕН, а не голый IP) — другой, не палёный IP.
+//
+// Прямой TCP на IP датацентра (grpc/tcp/xhttp на 141.x) морозится ОДИНАКОВО, даже grpc:
+// пробник проходит, а реальный трафик виснет. Такое — только вручную, не в авто.
 func Resilient(p Profile) bool {
 	switch p.Proto {
 	case "hysteria2", "tuic":
 		return true
+	}
+	// vless (TCP): безопасен, только если за CDN — сервер задан доменом, не IP.
+	if net.ParseIP(p.Server) != nil {
+		return false // прямой на IP датацентра — морозится по объёму
 	}
 	return p.Net == "grpc" || p.Net == "ws" || p.Net == "http" || p.Net == "httpupgrade"
 }
@@ -33,7 +43,7 @@ func Resilient(p Profile) bool {
 func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error) {
 	var outbounds []map[string]any
 	var tags []string
-	var resilientTags []string // grpc/ws/http — мультиплекс, вне «Сигнала 3» ТСПУ
+	var resilientTags []string // каналы вне заморозки ТСПУ: UDP (hy2/tuic) + CDN-домен (ws)
 	used := map[string]bool{}
 
 	for i, p := range profiles {
@@ -78,10 +88,10 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 		return nil, errors.New("нет профилей, совместимых с движком")
 	}
 
-	// В auto-пул берём устойчивые транспорты (grpc/ws), если они есть. Сырой tcp/Vision
-	// исключаем из авто-выбора: крошечный пробник generate_204 на нём ПРОХОДИТ, а реальный
-	// трафик замерзает после ~15-20 КБ (ТСПУ blackholing) — urltest иначе залипал на мёртвом.
-	// tcp/Vision остаётся в selector'е «proxy» как ручной/последний резерв.
+	// В auto-пул берём только каналы, уходящие от заморозки (UDP + CDN-домен). Прямой
+	// TCP на IP датацентра (grpc/tcp/xhttp) исключаем: крошечный пробник generate_204 на
+	// нём ПРОХОДИТ, а реальный трафик замерзает после ~15-20 КБ (ТСПУ blackholing) —
+	// иначе urltest сажает юзера на мёртвый канал. Они остаются в «proxy» как ручной резерв.
 	autoPool := resilientTags
 	if len(autoPool) == 0 {
 		autoPool = tags // устойчивых нет — берём что есть, лучше так, чем никак

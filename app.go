@@ -268,7 +268,7 @@ func (a *App) Disconnect() {
 // probe проверяет, что трафик реально уходит через туннель. Два хоста —
 // чтобы блокировка/сбой одного не давал ложное «не подключено».
 func (a *App) probe(within time.Duration) bool {
-	client := &http.Client{Timeout: 4 * time.Second}
+	client := directClient(4 * time.Second) // без системного прокси — меряем туннель, а не прокси юзера
 	urls := []string{"https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204"}
 	deadline := time.Now().Add(within)
 	for {

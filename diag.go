@@ -16,6 +16,12 @@ import (
 // Диагностика через локальный контроллер sing-box (clash_api): какой канал
 // активен, какие отвечают, какие душатся. Всё по loopback, наружу не торчит.
 
+// directClient — HTTP-клиент БЕЗ системного прокси. Запросы к 127.0.0.1 (контроллер)
+// не должны уходить через прокси юзера — иначе диагностика молчит.
+func directClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: nil}}
+}
+
 // freeLoopbackAddr — свободный порт на 127.0.0.1 для контроллера. "" если не вышло.
 func freeLoopbackAddr() string {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -34,7 +40,7 @@ func (a *App) clashJSON(path string) (map[string]any, bool) {
 	if addr == "" {
 		return nil, false
 	}
-	c := &http.Client{Timeout: 8 * time.Second}
+	c := directClient(8 * time.Second)
 	resp, err := c.Get("http://" + addr + path)
 	if err != nil {
 		return nil, false
@@ -72,7 +78,7 @@ func (a *App) testChannel(tag string) (int, bool) {
 	if addr == "" {
 		return 0, false
 	}
-	c := &http.Client{Timeout: 9 * time.Second}
+	c := directClient(9 * time.Second)
 	u := "http://" + addr + "/proxies/" + url.PathEscape(tag) + "/delay?url=" +
 		url.QueryEscape("https://www.gstatic.com/generate_204") + "&timeout=5000"
 	resp, err := c.Get(u)
@@ -179,6 +185,7 @@ func (a *App) logProfiles(profiles []core.Profile) {
 func (a *App) logChannels() {
 	chans := a.autoChannels()
 	if len(chans) == 0 {
+		a.log("диагностика каналов недоступна (контроллер не ответил)")
 		return
 	}
 	a.log("подбираю рабочий канал (проверок: %d)…", len(chans))
