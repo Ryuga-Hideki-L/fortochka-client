@@ -211,6 +211,7 @@ func (a *App) Connect() string {
 	a.lastChan = ""
 	a.mu.Unlock()
 	runtime.EventsEmit(a.ctx, "state", "connecting")
+	defer a.sendLogToServer(link) // по завершении попытки — отправить журнал на сервер под subId
 
 	if link == "" {
 		a.setState("disconnected")
