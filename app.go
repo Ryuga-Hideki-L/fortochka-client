@@ -162,7 +162,17 @@ func (a *App) superseded(myGen uint64) bool {
 	return a.gen != myGen
 }
 
-func logPath() string { return filepath.Join(configDir(), "fortochka.log") }
+func logPath() string     { return filepath.Join(configDir(), "fortochka.log") }
+func prevLogPath() string { return filepath.Join(configDir(), "fortochka.prev.log") }
+
+// GetPrevLogs — журнал прошлой сессии (для истории/диагностики).
+func (a *App) GetPrevLogs() string {
+	b, err := os.ReadFile(prevLogPath())
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
 
 func (a *App) log(format string, args ...any) {
 	f, err := os.OpenFile(logPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -213,9 +223,18 @@ func (a *App) Connect() string {
 	if zapretOn {
 		a.DPIStop()
 	}
+	// сохранить прошлую сессию (история) перед перезаписью журнала
+	if b, err := os.ReadFile(logPath()); err == nil && len(b) > 0 {
+		os.WriteFile(prevLogPath(), b, 0o600)
+	}
 	// новый журнал на сессию
 	os.WriteFile(logPath(), []byte(fmt.Sprintf("%s  === подключение ===\n", time.Now().Format("15:04:05"))), 0o600)
 	a.log("Форточка %s · %s", version, osArch())
+	if isAdmin() {
+		a.log("права администратора: да")
+	} else {
+		a.log("права администратора: НЕТ — туннель не поднимется. Закройте и запустите от имени администратора (ПКМ по ярлыку → «Запуск от имени администратора»)")
+	}
 	if un != "" {
 		a.log("%s", un)
 	}
