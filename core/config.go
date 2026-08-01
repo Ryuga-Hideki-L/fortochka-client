@@ -5,15 +5,31 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 )
 
-// Split — настройки раздельного туннелирования (что идёт мимо Форточки).
+// Split — настройки раздельного туннелирования.
+//
+// Два режима, и они противоположны по смыслу:
+//
+//	OnlyListed = false (по умолчанию) — «исключения»: перечисленное идёт МИМО
+//	  туннеля, остальное через него. Так работало всегда.
+//	OnlyListed = true — «только выбранное»: через туннель идёт ТОЛЬКО
+//	  перечисленное, остальное напрямую. Нужно, когда туннель требуется одной-двум
+//	  программам, а остальному интернету он мешает или не нужен.
+//
+// Поля Apps и Sites в обоих режимах те же самые, меняется лишь их трактовка —
+// поэтому подписи в интерфейсе обязаны меняться вместе с режимом, иначе человек
+// настроит ровно наоборот.
 type Split struct {
-	BypassRu bool     // РФ-домены напрямую
-	Apps     []string // имена процессов мимо туннеля (chrome.exe)
-	Sites    []string // домены мимо туннеля (example.com)
+	BypassRu   bool     // РФ-домены напрямую (только в режиме исключений)
+	Apps       []string // имена процессов: chrome.exe
+	Sites      []string // домены: example.com
+	OnlyListed bool     // true — через туннель идёт только перечисленное
+	RuCats     []string // включённые категории РФ-сервисов (см. ru_direct.go)
+	RuOff      []string // домены категорий, снятые пользователем вручную
 }
 
 // ClashAPIAddr — дефолтный адрес контроллера для тестов. В приложении порт
@@ -40,10 +56,25 @@ func Resilient(p Profile) bool {
 	return p.Net == "grpc" || p.Net == "ws"
 }
 
+// Unsupported — почему профиль не попадёт в конфиг движка. "" = попадёт.
+// Раньше такие профили отбрасывались молча, и в подписке из шести строк до движка
+// доезжало пять без единого слова в журнале — со стороны это выглядело как
+// «клиент потерял сервер».
+func Unsupported(p Profile) string {
+	proto := p.Proto
+	if proto == "" {
+		proto = "vless"
+	}
+	if proto == "vless" && p.Net == "xhttp" {
+		return "движок sing-box не умеет xhttp (это транспорт Xray)"
+	}
+	return ""
+}
+
 // BuildConfig собирает конфиг sing-box из профилей подписки:
 // TUN (весь трафик), авто-выбор лучшего сервера по задержке, обход локалки,
 // плюс раздельное туннелирование по приложениям/сайтам/РФ-доменам.
-func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error) {
+func BuildConfig(profiles []Profile, sp Split, clashAddr string, tlsFragment bool) ([]byte, error) {
 	var outbounds []map[string]any
 	var tags []string
 	var resilientTags []string // каналы вне заморозки ТСПУ: UDP (hy2/tuic) + CDN-домен (ws)
@@ -77,7 +108,7 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 		case "tuic":
 			ob = buildTuic(tag, p)
 		default: // vless
-			ob = buildVless(tag, p)
+			ob = buildVless(tag, p, tlsFragment)
 		}
 		resilient = Resilient(p)
 
@@ -135,15 +166,37 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 	if sp.BypassRu {
 		dnsRules = append(dnsRules, map[string]any{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "server": "local"})
 	}
+
+	// Куда по умолчанию уходит резолв. В режиме «только выбранное» — напрямую:
+	// иначе получается рассинхрон, из-за которого режим работает наполовину.
+	// Запрос на резолв уходит РАНЬШЕ, чем маршрутизатор понял, какой процесс его
+	// затеял, поэтому при dns.final=remote имена разрешались бы через туннель даже
+	// для программ, которым туннель не предназначен: и утечка запросов, и попадание
+	// на другой узел CDN, чем тот, куда пойдёт само соединение.
+	dnsFinal := "remote"
+	if sp.OnlyListed {
+		dnsFinal = "local"
+		// Домены, которым туннель предназначен, резолвим через него: адрес должен
+		// приходить из той же точки, откуда пойдёт соединение.
+		if len(sp.Sites) > 0 {
+			dnsRules = append(dnsRules,
+				map[string]any{"domain_suffix": sp.Sites, "server": "remote"})
+		}
+	}
+
 	// ipv4_only: не отдаём AAAA → нет IPv6-назначений → нет утечки IPv6 мимо туннеля
 	// и нет happy-eyeballs-виса в мёртвый IPv6 (сервера IPv4-only). Сайты почти все с IPv4.
-	dnsCfg := map[string]any{"servers": dnsServers, "final": "remote", "strategy": "ipv4_only"}
+	dnsCfg := map[string]any{"servers": dnsServers, "final": dnsFinal, "strategy": "ipv4_only"}
 	if len(dnsRules) > 0 {
 		dnsCfg["rules"] = dnsRules
 	}
 
 	cfg := map[string]any{
-		"log": map[string]any{"level": "warn"},
+		// level=info + отметки времени: на "warn" движок молчал почти обо всём,
+		// и в журнале не было видно ни выбора аутбаунда, ни причины обрыва —
+		// оставались только строки самого приложения. Разбирать «где умерло»
+		// по такому логу невозможно.
+		"log": map[string]any{"level": "info", "timestamp": true},
 		"dns": dnsCfg,
 		"inbounds": []map[string]any{{
 			"type":           "tun",
@@ -159,8 +212,10 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 		"route": map[string]any{
 			"default_domain_resolver": map[string]any{"server": "local"},
 			"rules":                   buildRoute(sp),
-			"final":                   "proxy",
-			"auto_detect_interface":   true,
+			// В режиме «только выбранное» всё несовпавшее идёт напрямую, и туннель
+			// получают лишь явные правила. В обычном режиме наоборот.
+			"final":                 routeFinal(sp),
+			"auto_detect_interface": true,
 		},
 	}
 	// локальный контроллер — приложение спрашивает у него активный канал и задержки.
@@ -173,19 +228,76 @@ func BuildConfig(profiles []Profile, sp Split, clashAddr string) ([]byte, error)
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
+// routeFinal — куда уходит всё, что не совпало ни с одним правилом.
+func routeFinal(sp Split) string {
+	if sp.OnlyListed {
+		return "direct"
+	}
+	return "proxy"
+}
+
+// appNames приводит имена процессов к тому виду, который ожидает sing-box.
+// На Windows расширение обязательно: правило «chrome» не сработает, нужно
+// «chrome.exe». Человек в поле ввода про это не помнит, поэтому дополняем сами —
+// но только там, где расширения нет вовсе, чтобы не ломать имена в Linux.
+func appNames(apps []string) []string {
+	out := make([]string, 0, len(apps)*2)
+	for _, a := range apps {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		out = append(out, a)
+		if runtime.GOOS == "windows" && !strings.Contains(a, ".") {
+			out = append(out, a+".exe")
+		}
+	}
+	return out
+}
+
 // buildRoute — правила маршрутизации с учётом раздельного туннелирования.
-// Порядок важен: первое совпадение выигрывает, потом final=proxy.
+// Порядок важен: первое совпадение выигрывает, дальше действует final.
 func buildRoute(sp Split) []map[string]any {
 	rules := []map[string]any{
 		{"action": "sniff"},
 		{"protocol": "dns", "action": "hijack-dns"},
 		{"ip_is_private": true, "outbound": "direct"},
 	}
-	if len(sp.Apps) > 0 {
-		rules = append(rules, map[string]any{"process_name": sp.Apps, "outbound": "direct"})
+
+	if sp.OnlyListed {
+		// Режим «только выбранное». Порядок правил здесь критичен.
+		//
+		// Первым — сам движок напрямую. Иначе получается петля: sing-box поднимает
+		// соединение к нашему серверу, это соединение попадает в его же правила,
+		// не совпадает ни с чем, уходит в... себя. Известные грабли, на них
+		// наступали и в Throne, и в v2rayN.
+		rules = append(rules, map[string]any{
+			"process_name": appNames([]string{"sing-box", "sing-box.exe"}),
+			"outbound":     "direct",
+		})
+		if apps := appNames(sp.Apps); len(apps) > 0 {
+			rules = append(rules, map[string]any{"process_name": apps, "outbound": "proxy"})
+		}
+		if len(sp.Sites) > 0 {
+			rules = append(rules, map[string]any{"domain_suffix": sp.Sites, "outbound": "proxy"})
+		}
+		return rules
+	}
+
+	// Обычный режим: перечисленное идёт мимо туннеля.
+	if apps := appNames(sp.Apps); len(apps) > 0 {
+		rules = append(rules, map[string]any{"process_name": apps, "outbound": "direct"})
 	}
 	if len(sp.Sites) > 0 {
 		rules = append(rules, map[string]any{"domain_suffix": sp.Sites, "outbound": "direct"})
+	}
+	// Категории РФ-сервисов идут ПЕРЕД широким суффиксом .ru не ради приоритета
+	// (первое совпадение и так выигрывает, а результат у обоих правил — direct),
+	// а потому что они работают и без него: CDN вроде yastatic.net и okkoapi.tv
+	// живут вне зоны .ru, и при выключенном «российские сайты напрямую» именно эти
+	// домены остаются единственным, что чинит банки и Госуслуги.
+	if ru := ruDirectDomains(sp.RuCats, sp.RuOff); len(ru) > 0 {
+		rules = append(rules, map[string]any{"domain_suffix": ru, "outbound": "direct"})
 	}
 	if sp.BypassRu {
 		rules = append(rules, map[string]any{"domain_suffix": []string{".ru", ".su", ".рф", "xn--p1ai"}, "outbound": "direct"})
@@ -193,7 +305,7 @@ func buildRoute(sp Split) []map[string]any {
 	return rules
 }
 
-func buildVless(tag string, p Profile) map[string]any {
+func buildVless(tag string, p Profile, tlsFragment bool) map[string]any {
 	ob := map[string]any{
 		"type":        "vless",
 		"tag":         tag,
@@ -215,9 +327,11 @@ func buildVless(tag string, p Profile) map[string]any {
 			"public_key": p.PBK,
 			"short_id":   p.SID,
 		}
-	} else {
-		// не-Reality (ws+tls за CDN): режем ClientHello, чтобы DPI не читал SNI
-		// одним пакетом. На Reality НЕ ставим — там хендшейк зеркалит реальный сайт.
+		// fragment не применяем: Reality подменяет TLS-хендшейк, fragment режет
+		// ClientHello по SNI — см. sing-box TLS outbound (fragment + reality в одном
+		// блоке, но fragment для plaintext SNI-matching DPI, не для Reality).
+	} else if tlsFragment {
+		// не-Reality (ws+tls за CDN): режем ClientHello, чтобы DPI не читал SNI одним пакетом
 		tls["fragment"] = true
 		tls["fragment_fallback_delay"] = "500ms"
 	}
