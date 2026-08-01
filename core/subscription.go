@@ -14,6 +14,11 @@ import (
 	"time"
 )
 
+// Log — журнал приложения. Пакет core пишет сюда шаги, которые раньше были не видны
+// снаружи: попытки скачать подписку, коды ответа, результат DoH, отбраковку строк.
+// Приложение подменяет его на свой логгер; по умолчанию — тишина (тесты).
+var Log = func(string, ...any) {}
+
 // Profile — один сервер из подписки.
 type Profile struct {
 	Proto   string // vless (по умолчанию) / hysteria2 / tuic
@@ -51,6 +56,69 @@ func hasDirectLink(s string) bool {
 	return false
 }
 
+// SubMirrors — запасные адреса раздачи подписки, кроме того, что сохранён у клиента.
+// Смысл: адрес в ссылке живёт на нашем домене, и его блокировка отрезает человека от
+// обновлений навсегда — новую ссылку ему взять неоткуда, ведь сайт тоже недоступен.
+// Зеркала должны жить на чужой инфраструктуре: измерения 2026-07-26 с абонентских
+// сетей РФ дают Cloudflare 8/8, Fastly 8/8, jsDelivr 8/8 против 0/8 у нашего CDN.
+//
+// Пусто = зеркал нет. Заполняется при сборке через -X core.subMirrors=<список через запятую>,
+// чтобы адреса зеркал не лежали в публичном исходнике.
+var subMirrors string
+
+// SubCandidates — по какому адресу пробовать скачать подписку и в каком порядке.
+// Сначала то, что у человека сохранено, затем зеркала с тем же путём.
+func SubCandidates(link string) []string {
+	link = strings.TrimSpace(link)
+	out := []string{link}
+	if subMirrors == "" {
+		return out
+	}
+	u, err := url.Parse(link)
+	if err != nil || u.Path == "" {
+		return out
+	}
+	for _, m := range strings.Split(subMirrors, ",") {
+		m = strings.TrimSpace(strings.TrimRight(m, "/"))
+		if m == "" {
+			continue
+		}
+		cand := m + u.Path
+		if cand != link {
+			out = append(out, cand)
+		}
+	}
+	return out
+}
+
+// FetchProfilesAny перебирает адреса, пока какой-нибудь не отдаст профили.
+// Возвращает профили, сработавший адрес и ошибку последней попытки.
+func FetchProfilesAny(link string) ([]Profile, string, error) {
+	var lastErr error
+	cands := SubCandidates(link)
+	for i, c := range cands {
+		p, err := FetchProfiles(c)
+		if err == nil && len(p) > 0 {
+			if i > 0 {
+				Log("  подписка взята с зеркала: %s", hostOnly(c))
+			}
+			return p, c, nil
+		}
+		lastErr = err
+		if len(cands) > 1 {
+			Log("  адрес %s не сработал: %v", hostOnly(c), err)
+		}
+	}
+	return nil, "", lastErr
+}
+
+func hostOnly(s string) string {
+	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return s
+}
+
 func FetchProfiles(input string) ([]Profile, error) {
 	input = strings.TrimSpace(input)
 
@@ -76,12 +144,16 @@ func FetchProfiles(input string) ([]Profile, error) {
 		if attempt > 0 {
 			time.Sleep(1500 * time.Millisecond)
 		}
+		started := time.Now()
 		resp, err := client.Get(input)
 		if err != nil {
 			lastErr = err
+			// текст ошибки целиком: по нему видно, это таймаут, отказ TLS или DNS
+			Log("  подписка, попытка %d/4: ошибка сети за %s — %v", attempt+1, took(started), err)
 			continue
 		}
 		if resp.StatusCode != 200 {
+			Log("  подписка, попытка %d/4: HTTP %d за %s", attempt+1, resp.StatusCode, took(started))
 			resp.Body.Close()
 			lastErr = errors.New("сервер подписки вернул " + strconv.Itoa(resp.StatusCode))
 			continue
@@ -90,15 +162,21 @@ func FetchProfiles(input string) ([]Profile, error) {
 		resp.Body.Close()
 		if err != nil {
 			lastErr = err
+			Log("  подписка, попытка %d/4: обрыв при чтении тела — %v", attempt+1, err)
 			continue
 		}
+		Log("  подписка: HTTP 200, %d Б за %s (попытка %d)", len(raw), took(started), attempt+1)
 		break
 	}
 	if raw == nil {
-		_ = lastErr
+		Log("  подписка: все 4 попытки провалились, последняя ошибка — %v", lastErr)
 		return nil, errors.New("Не удалось скачать подписку — CDN недоступен, попробуйте ещё раз или вставьте прямую ссылку")
 	}
 	return parseLines(decodeMaybeBase64(string(raw))), nil
+}
+
+func took(t time.Time) string {
+	return time.Since(t).Round(time.Millisecond).String()
 }
 
 // dohResolve резолвит host в IPv4 через DoH (Cloudflare/Google), обходя ISP-DNS,
@@ -126,6 +204,7 @@ func dohResolve(host string) string {
 		req.Header.Set("Accept", "application/dns-json")
 		resp, err := c.Do(req)
 		if err != nil {
+			Log("  DoH %s: %v", dohName(ep), err)
 			continue
 		}
 		var d dnsResp
@@ -133,11 +212,21 @@ func dohResolve(host string) string {
 		resp.Body.Close()
 		for _, a := range d.Answer {
 			if a.Type == 1 && net.ParseIP(a.Data) != nil { // 1 = A-запись
+				Log("  DoH %s: %s → %s", dohName(ep), host, a.Data)
 				return a.Data
 			}
 		}
+		Log("  DoH %s: ответ без A-записи для %s", dohName(ep), host)
 	}
+	Log("  DoH: ни один резолвер не ответил, идём через системный DNS")
 	return ""
+}
+
+func dohName(ep string) string {
+	if strings.Contains(ep, "1.1.1.1") {
+		return "cloudflare"
+	}
+	return "google"
 }
 
 // subClient — http-клиент для скачивания подписки: резолвит домен через DoH
@@ -172,6 +261,10 @@ func parseLines(s string) []Profile {
 			}
 			if ok {
 				out = append(out, p)
+			} else if strings.Contains(part, "://") {
+				// строку узнали по схеме, но разобрать не смогли — раньше молча
+				// пропускали, и профиль просто исчезал без следа
+				Log("  строка не разобрана: %s…", clip(part, 40))
 			}
 		}
 	}
@@ -289,6 +382,14 @@ func parseTuic(link string) (Profile, bool) {
 		return Profile{}, false
 	}
 	return p, true
+}
+
+// clip обрезает строку для журнала: в ссылке дальше идут UUID и ключи, их не пишем.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 func def(a, b string) string {

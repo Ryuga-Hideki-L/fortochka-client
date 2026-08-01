@@ -87,6 +87,27 @@ jobs:
             Fortochka.zip
             Fortochka-*.zip
 
+  deploy-cdn:
+    needs: [windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync Fortochka.zip to OVH CDN
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.OVH_HOST }}
+          username: ${{ secrets.OVH_USER }}
+          key: ${{ secrets.OVH_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            if [ -x /usr/local/bin/fortochka-client-sync ]; then
+              /usr/local/bin/fortochka-client-sync
+            else
+              python3 /home/ubuntu/graph-tools/sync-fortochka-client.py
+            fi
+            curl -fsSI 'https://vpn.rungvard.net/d/a3b35285e291afd3/Fortochka.zip' | rg -i content-length
+
   linux:
     runs-on: ubuntu-24.04
     steps:

@@ -2,10 +2,12 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -14,6 +16,7 @@ type Engine struct {
 	mu  sync.Mutex
 	cmd *exec.Cmd
 	dir string
+	bin string
 	log *os.File
 }
 
@@ -58,7 +61,15 @@ func (e *Engine) Start(config []byte, logPath string) error {
 		os.RemoveAll(dir)
 		return err
 	}
-	logf, _ := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// Ошибку открытия журнала раньше проглатывали: вывод движка просто некуда было
+	// направить, и человек видел «пустые логи» без единого намёка на причину.
+	// Теперь причина попадает в сам журнал приложения, а если и он недоступен —
+	// в текст ошибки запуска. Молчать здесь нельзя: журнал — единственное, по чему
+	// потом разбирают, почему не подключилось.
+	logf, logErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if logErr != nil {
+		Log("ВНИМАНИЕ: журнал движка не ведётся — не удалось открыть %s: %v", logPath, logErr)
+	}
 
 	cmd := exec.Command(bin, "run", "-c", cfgPath)
 	cmd.Dir = dir
@@ -77,7 +88,25 @@ func (e *Engine) Start(config []byte, logPath string) error {
 	e.cmd = cmd
 	e.dir = dir
 	e.log = logf
+	e.bin = bin
 	return nil
+}
+
+// Describe — чем именно запущен движок: путь к бинарю, PID, каталог конфига.
+// Нужно, чтобы по журналу отличать «взяли не тот sing-box» от «движок не стартовал».
+func (e *Engine) Describe() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cmd == nil || e.cmd.Process == nil {
+		return "не запущен"
+	}
+	ver := "?"
+	if out, err := exec.Command(e.bin, "version").Output(); err == nil {
+		if line := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0]); line != "" {
+			ver = line
+		}
+	}
+	return fmt.Sprintf("PID %d · %s · конфиг в %s", e.cmd.Process.Pid, ver, e.dir)
 }
 
 func (e *Engine) Stop() {
